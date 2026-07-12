@@ -22,6 +22,16 @@ The verification suite covers:
 - C ABI contract behavior
 - representative codec matrix examples
 
+Before committing or tagging, check the worktree:
+
+```sh
+git status --short
+```
+
+Only source, documentation, and release metadata changes should be staged.
+Generated binaries and `nimcache/` outputs are ignored and should not be
+committed.
+
 ## CI Verification
 
 Pushes and pull requests run the same verification entry point on:
@@ -60,6 +70,7 @@ No matches should be returned.
 Update `version` in `nifkit.nimble`, then create a matching Git tag:
 
 ```sh
+git status --short
 git tag -a v0.1.0 -m "nifkit v0.1.0"
 git push origin main:main
 git push origin refs/tags/v0.1.0:refs/tags/v0.1.0

@@ -12,6 +12,8 @@ codecInfo()
 The current backend is an internal implementation of the published NIF/BIF
 specification. It must not depend on Nimony or any other compiler
 implementation at runtime, build time, or in its conformance contract.
+Semantic interpretation belongs to the embedding application or another NIF/BIF
+implementation.
 
 Fixtures and property tests are derived from the published NIF/BIF
 specification. Interoperability checks against any independent implementation

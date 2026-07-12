@@ -16,6 +16,29 @@ validating, and inspecting NIF text and BIF binary payloads.
 designed to be embedded by databases, drivers, adapters, language bindings, and
 other tools that need NIF/BIF support.
 
+## Install
+
+From a local checkout:
+
+```sh
+nimble install
+```
+
+From a Git repository:
+
+```sh
+nimble install https://github.com/<owner>/nifkit
+```
+
+After the package is accepted into the Nimble package list, it can be installed
+with:
+
+```sh
+nimble install nifkit
+```
+
+## Format Boundary
+
 The codec backend is implemented against the public NIF/BIF specification. The
 specification is the compatibility contract: this package has no dependency on
 Nimony or any compiler implementation. This keeps the public API stable if an
@@ -35,6 +58,11 @@ they are written with NIF escapes.
 BIF decoding renders token-kind-aware canonical NIF. For example, a BIF
 identifier containing `.` is printed with an escaped dot so that it remains an
 identifier when parsed again, rather than accidentally becoming a symbol.
+
+`nifkit` is not a NIF interpreter, compiler frontend/backend, VM, optimizer, or
+dialect normalizer. It does not decide whether callers should use `.s.nif`,
+`lengc`, or any other compiler-stage dialect. Applications must choose the
+correct NIF dialect or compiler stage for their semantic use case.
 
 RocheDB can use nifkit for NIF/BIF payload conversion, but nifkit itself is
 general-purpose and does not know about RocheDB rings, placement, or storage
@@ -72,7 +100,7 @@ validateBif(bif)
 
 Applications should call the Nim API or C ABI directly. Applications may store
 BIF however they want; semantic interpretation belongs to the embedding
-application, nifkit, or another NIF/BIF implementation.
+application or another NIF/BIF implementation.
 
 ## C ABI
 
