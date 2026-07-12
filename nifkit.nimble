@@ -17,7 +17,7 @@ task test, "Run the NIF/BIF codec test suite":
 task cabiContract, "Build and run the NIFKit C ABI contract":
   when defined(windows):
     exec "nim c --app:lib -d:release --hints:off --warnings:off --nimcache:nimcache/nifkit-capi -o:nifkit.dll src/nifkit_capi.nim"
-    exec "clang -std=c11 -Wall -Wextra -Iinclude examples/cabi_contract.c -L. -lnifkit -o nifkit_cabi_contract.exe"
+    exec "clang -std=c11 -Wall -Wextra -DNIFKIT_DYNAMIC_LOAD -Iinclude examples/cabi_contract.c -o nifkit_cabi_contract.exe"
     exec "nifkit_cabi_contract.exe"
   elif defined(macosx):
     exec "nim c --app:lib -d:release --hints:off --warnings:off --nimcache:/tmp/nifkit-capi -o:/tmp/libnifkit.dylib src/nifkit_capi.nim"
