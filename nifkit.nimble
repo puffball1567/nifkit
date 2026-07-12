@@ -1,7 +1,7 @@
 version       = "0.1.0"
 author        = "Nifkit contributors"
 description   = "Spec-based NIF/BIF toolkit for multiple languages"
-license       = "Apache-2.0"
+license       = "MIT"
 srcDir        = "src"
 
 requires "nim >= 2.2.0"

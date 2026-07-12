@@ -68,6 +68,12 @@ RocheDB can use nifkit for NIF/BIF payload conversion, but nifkit itself is
 general-purpose and does not know about RocheDB rings, placement, or storage
 metadata.
 
+## Acknowledgements
+
+`nifkit` exists because Araq and the Nimony/NIF contributors defined and
+documented the NIF/BIF foundation. This project is an independent compatibility
+library built on that public specification, with thanks to their work.
+
 ## Development
 
 ```sh
