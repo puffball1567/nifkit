@@ -9,6 +9,13 @@ suite "NIF to BIF v5 encoder":
     let source = "(record title \"NIF\" -5 12u)"
     check bifToNif(nifToBif(source)) == source
 
+  test "emits canonical little-endian BIF fixed-width fields":
+    let bif = nifToBif("1u")
+    check bif[0 ..< 8] == "NIFBIN\0\5"
+    check bif[8 ..< 16] == "\x1c\0\0\0\0\0\0\0"
+    check bif[24 ..< 28] == "\x14\0\0\0"
+    check bifToNif(bif) == "1u"
+
   test "encodes wide signed integers and a large pooled string":
     let longText = repeat("x", 300)
     let source = "(record -34359738368 \"" & longText & "\")"

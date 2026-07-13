@@ -1,5 +1,5 @@
-version       = "0.1.0"
-author        = "Nifkit contributors"
+version       = "0.1.1"
+author        = "puffball1567"
 description   = "Spec-based NIF/BIF toolkit for multiple languages"
 license       = "MIT"
 srcDir        = "src"
