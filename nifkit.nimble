@@ -1,4 +1,4 @@
-version       = "0.1.1"
+version       = "0.2.0"
 author        = "puffball1567"
 description   = "Spec-based NIF/BIF toolkit for multiple languages"
 license       = "MIT"
@@ -13,6 +13,7 @@ task test, "Run the NIF/BIF codec test suite":
   exec "nim c --nimcache:nimcache/test_codec_matrix -r tests/test_codec_matrix.nim"
   exec "nim c --nimcache:nimcache/test_spec_fixtures -r tests/test_spec_fixtures.nim"
   exec "nim c --nimcache:nimcache/test_malformed_fuzz -r tests/test_malformed_fuzz.nim"
+  exec "nim c --nimcache:nimcache/test_codec_limits -r tests/test_codec_limits.nim"
 
 task cabiContract, "Build and run the NIFKit C ABI contract":
   when defined(windows):
@@ -32,6 +33,9 @@ task verify, "Run the full NIFKit verification suite":
   exec "nimble test -y"
   exec "nimble matrixDemo -y"
   exec "nimble cabiContract -y"
+
+task arcMemory, "Run repeated ARC codec paths":
+  exec "nim c --mm:arc -d:release --nimcache:nimcache/arc-memory -r tests/test_arc_memory.nim"
 
 task matrixDemo, "Run the NIFKit codec matrix demo":
   exec "nim c --nimcache:nimcache/codec_matrix_demo -r examples/codec_matrix_demo.nim"

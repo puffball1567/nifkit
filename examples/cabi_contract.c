@@ -9,18 +9,30 @@
 typedef int (*nifkit_nif_to_bif_fn)(const void *, size_t, void **, size_t *);
 typedef int (*nifkit_bif_to_nif_fn)(const void *, size_t, void **, size_t *);
 typedef int (*nifkit_validate_bif_fn)(const void *, size_t);
+typedef int (*nifkit_nif_to_bif_with_limits_fn)(const void *, size_t, void **,
+                                                size_t *, const nifkit_limits *);
+typedef int (*nifkit_bif_to_nif_with_limits_fn)(const void *, size_t, void **,
+                                                size_t *, const nifkit_limits *);
+typedef int (*nifkit_validate_bif_with_limits_fn)(const void *, size_t,
+                                                  const nifkit_limits *);
 typedef void (*nifkit_free_fn)(void *);
 typedef const char *(*nifkit_last_error_fn)(void);
 
 static nifkit_nif_to_bif_fn p_nifkit_nif_to_bif;
 static nifkit_bif_to_nif_fn p_nifkit_bif_to_nif;
 static nifkit_validate_bif_fn p_nifkit_validate_bif;
+static nifkit_nif_to_bif_with_limits_fn p_nifkit_nif_to_bif_with_limits;
+static nifkit_bif_to_nif_with_limits_fn p_nifkit_bif_to_nif_with_limits;
+static nifkit_validate_bif_with_limits_fn p_nifkit_validate_bif_with_limits;
 static nifkit_free_fn p_nifkit_free;
 static nifkit_last_error_fn p_nifkit_last_error;
 
 #define nifkit_nif_to_bif p_nifkit_nif_to_bif
 #define nifkit_bif_to_nif p_nifkit_bif_to_nif
 #define nifkit_validate_bif p_nifkit_validate_bif
+#define nifkit_nif_to_bif_with_limits p_nifkit_nif_to_bif_with_limits
+#define nifkit_bif_to_nif_with_limits p_nifkit_bif_to_nif_with_limits
+#define nifkit_validate_bif_with_limits p_nifkit_validate_bif_with_limits
 #define nifkit_free p_nifkit_free
 #define nifkit_last_error p_nifkit_last_error
 
@@ -33,12 +45,21 @@ static void load_nifkit(void) {
       (nifkit_bif_to_nif_fn)GetProcAddress(lib, "nifkit_bif_to_nif");
   p_nifkit_validate_bif =
       (nifkit_validate_bif_fn)GetProcAddress(lib, "nifkit_validate_bif");
+  p_nifkit_nif_to_bif_with_limits = (nifkit_nif_to_bif_with_limits_fn)
+      GetProcAddress(lib, "nifkit_nif_to_bif_with_limits");
+  p_nifkit_bif_to_nif_with_limits = (nifkit_bif_to_nif_with_limits_fn)
+      GetProcAddress(lib, "nifkit_bif_to_nif_with_limits");
+  p_nifkit_validate_bif_with_limits = (nifkit_validate_bif_with_limits_fn)
+      GetProcAddress(lib, "nifkit_validate_bif_with_limits");
   p_nifkit_free = (nifkit_free_fn)GetProcAddress(lib, "nifkit_free");
   p_nifkit_last_error =
       (nifkit_last_error_fn)GetProcAddress(lib, "nifkit_last_error");
   assert(p_nifkit_nif_to_bif != NULL);
   assert(p_nifkit_bif_to_nif != NULL);
   assert(p_nifkit_validate_bif != NULL);
+  assert(p_nifkit_nif_to_bif_with_limits != NULL);
+  assert(p_nifkit_bif_to_nif_with_limits != NULL);
+  assert(p_nifkit_validate_bif_with_limits != NULL);
   assert(p_nifkit_free != NULL);
   assert(p_nifkit_last_error != NULL);
 }
@@ -62,6 +83,22 @@ int main(void) {
   assert(decoded_len == strlen(nif));
   assert(memcmp(decoded, nif, decoded_len) == 0);
   nifkit_free(decoded);
+
+  nifkit_limits limited = {0};
+  limited.max_input_bytes = 1024;
+  limited.max_output_bytes = 1;
+  limited.max_nesting_depth = 32;
+  limited.max_tokens = 1024;
+  limited.max_pool_entries = 1024;
+  limited.max_pool_bytes = 1024;
+  limited.max_string_bytes = 1024;
+  limited.max_index_entries = 1024;
+  decoded = (void *)0x1;
+  decoded_len = 999;
+  assert(nifkit_bif_to_nif_with_limits(bif, bif_len, &decoded, &decoded_len,
+                                       &limited) != 0);
+  assert(decoded == NULL && decoded_len == 0);
+  assert(strstr(nifkit_last_error(), "output exceeds") != NULL);
 
   void *bad_out = (void *)0x1;
   size_t bad_len = 999;
