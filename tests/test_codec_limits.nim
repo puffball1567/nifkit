@@ -9,8 +9,10 @@ proc expectKind(kind: NifKitErrorKind; body: proc()) =
     check error.kind == kind
 
 suite "codec limits and structured errors":
-  test "input limit is checked before parsing":
+  test "NIF input accepts the exact limit and rejects one byte more":
     var limits = defaultCodecLimits()
+    limits.maxInputBytes = 3
+    check nifToBif("abc", limits).len > 0
     limits.maxInputBytes = 2
     expectKind(nkeInputTooLarge):
       discard nifToBif("abc", limits)
@@ -25,10 +27,12 @@ suite "codec limits and structured errors":
   test "NIF token and pool limits are independent":
     var tokenLimits = defaultCodecLimits()
     tokenLimits.maxTokens = 1
+    check nifToBif("a", tokenLimits).len > 0
     expectKind(nkeTokenLimit):
       discard nifToBif("a b", tokenLimits)
     var poolLimits = defaultCodecLimits()
     poolLimits.maxPoolEntries = 1
+    check nifToBif("longvalue", poolLimits).len > 0
     expectKind(nkePoolLimit):
       discard nifToBif("longvalue anotherlongvalue", poolLimits)
 
@@ -46,6 +50,59 @@ suite "codec limits and structured errors":
     bif[7] = char(4)
     expectKind(nkeUnsupportedVersion):
       validateBif(bif)
+
+  test "BIF pool, string, token, and index limits have separate kinds":
+    let stringBif = nifToBif("\"abcdef\"")
+    var stringLimits = defaultCodecLimits()
+    stringLimits.maxStringBytes = 6
+    validateBif(stringBif, stringLimits)
+    stringLimits.maxStringBytes = 5
+    expectKind(nkeStringLimit):
+      validateBif(stringBif, stringLimits)
+    var poolLimits = defaultCodecLimits()
+    poolLimits.maxPoolBytes = 6
+    validateBif(stringBif, poolLimits)
+    poolLimits.maxPoolBytes = 5
+    expectKind(nkePoolLimit):
+      validateBif(stringBif, poolLimits)
+    var tokenLimits = defaultCodecLimits()
+    tokenLimits.maxTokens = 1
+    validateBif(stringBif, tokenLimits)
+    tokenLimits.maxTokens = 0
+    expectKind(nkeTokenLimit):
+      validateBif(stringBif, tokenLimits)
+    let indexedBif = nifToBif("(defs :pkg.0.public)")
+    var indexLimits = defaultCodecLimits()
+    indexLimits.maxIndexEntries = 1
+    validateBif(indexedBif, indexLimits)
+    indexLimits.maxIndexEntries = 0
+    expectKind(nkeIndexLimit):
+      validateBif(indexedBif, indexLimits)
+
+  test "BIF input and nesting accept the exact limit and reject one more":
+    let bif = nifToBif("(a (b x))")
+    var inputLimits = defaultCodecLimits()
+    inputLimits.maxInputBytes = bif.len
+    validateBif(bif, inputLimits)
+    inputLimits.maxInputBytes = bif.len - 1
+    expectKind(nkeInputTooLarge):
+      validateBif(bif, inputLimits)
+    var depthLimits = defaultCodecLimits()
+    depthLimits.maxNestingDepth = 2
+    check bifToNif(bif, depthLimits) == "(a (b x))"
+    depthLimits.maxNestingDepth = 1
+    expectKind(nkeNestingTooDeep):
+      discard bifToNif(bif, depthLimits)
+
+  test "magic and endianness remain malformed input":
+    var magic = nifToBif("")
+    magic[0] = 'X'
+    expectKind(nkeMalformedInput):
+      validateBif(magic)
+    var endian = nifToBif("")
+    endian[6] = char(1)
+    expectKind(nkeMalformedInput):
+      validateBif(endian)
 
   test "limit errors do not poison a following conversion":
     var limits = defaultCodecLimits()
