@@ -36,6 +36,29 @@ suite "codec limits and structured errors":
     expectKind(nkePoolLimit):
       discard nifToBif("longvalue anotherlongvalue", poolLimits)
 
+  test "NIF string and pool bytes accept the boundary and reject one more":
+    var stringLimits = defaultCodecLimits()
+    stringLimits.maxStringBytes = 6
+    check nifToBif("\"abcdef\"", stringLimits).len > 0
+    stringLimits.maxStringBytes = 5
+    expectKind(nkeStringLimit):
+      discard nifToBif("\"abcdef\"", stringLimits)
+    var poolLimits = defaultCodecLimits()
+    poolLimits.maxPoolBytes = 6
+    check nifToBif("\"abcdef\"", poolLimits).len > 0
+    poolLimits.maxPoolBytes = 5
+    expectKind(nkePoolLimit):
+      discard nifToBif("\"abcdef\"", poolLimits)
+
+  test "NIF BIF output accepts the exact limit and rejects one more":
+    let encoded = nifToBif("x")
+    var limits = defaultCodecLimits()
+    limits.maxOutputBytes = encoded.len
+    check nifToBif("x", limits) == encoded
+    limits.maxOutputBytes = encoded.len - 1
+    expectKind(nkeOutputTooLarge):
+      discard nifToBif("x", limits)
+
   test "BIF output is bounded while rendering":
     let bif = nifToBif("\"abcdef\"")
     var limits = defaultCodecLimits()
