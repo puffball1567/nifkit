@@ -3,6 +3,9 @@
 NIFKit accepts untrusted NIF/BIF input, so decoder changes must preserve
 bounded allocation, structured errors, and C ABI compatibility.
 
+For language integration policy, see
+[docs/language-integration-policy.md](docs/language-integration-policy.md).
+
 ## Branch and Release Workflow
 
 - Create feature and fix branches from `devel`.
