@@ -77,6 +77,20 @@ suite "NIF to BIF v5 encoder":
       expect BifError:
         discard nifToBif(source)
 
+  test "rejects deeply nested NIF before stack exhaustion":
+    var limits = defaultCodecLimits()
+    limits.maxNestingDepth = 8
+    var source = "x"
+    for _ in 0 ..< 8:
+      source = "(tag " & source & ")"
+    check nifToBif(source, limits).len > 0
+    source = "(tag " & source & ")"
+    try:
+      discard nifToBif(source, limits)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeNestingTooDeep
+
   test "treats escaped leading digits as identifiers, not numbers":
     check bifToNif(nifToBif("\\31abc")) == "\\31abc"
     check bifToNif(nifToBif("\\31")) == "\\31"
