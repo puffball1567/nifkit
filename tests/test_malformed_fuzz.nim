@@ -71,11 +71,18 @@ proc mustReject(payload: string) =
   except BifError:
     discard
 
+proc mustBeMalformed(payload: string) =
+  try:
+    validateBif(payload)
+    fail()
+  except NifKitError as error:
+    check error.kind == nkeMalformedInput
+
 suite "malformed BIF fuzz and boundary checks":
   test "single-byte truncations fail with recoverable errors":
     let valid = tinyValidBif()
     for n in 0 ..< valid.len:
-      mustReject(valid[0 ..< n])
+      mustBeMalformed(valid[0 ..< n])
 
   test "single-byte mutations do not crash":
     let valid = tinyValidBif()
@@ -106,4 +113,22 @@ suite "malformed BIF fuzz and boundary checks":
     payload.add char(255)
     for _ in 0 ..< 8:
       payload.add char(255)
-    mustReject(payload)
+    mustBeMalformed(payload)
+
+  test "tag jump and trailing data are structured malformed input":
+    let badTag = token(9, 1'u32 or (2'u32 shl 9))
+    mustBeMalformed(bifWithTokens([badTag]))
+    var trailing = tinyValidBif()
+    trailing.add '\0'
+    mustBeMalformed(trailing)
+
+  test "malformed and limit failures do not poison later conversions":
+    mustReject("NIFBIN\0\5")
+    var limits = defaultCodecLimits()
+    limits.maxTokens = 0
+    try:
+      validateBif(bifWithTokens([token(0, 0)]), limits)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeTokenLimit
+    check bifToNif(nifToBif("(record x)")) == "(record x)"
