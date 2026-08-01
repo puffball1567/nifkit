@@ -77,7 +77,9 @@ on those internal error classes.
 
 ## C ABI Contract
 
-The C ABI is part of the conformance surface:
+The C ABI is part of the conformance surface for C-compatible consumers. It is
+not the recommended default integration boundary for other languages; see
+[language-integration-policy.md](language-integration-policy.md).
 
 - all inputs are `(pointer, length)` byte slices
 - NUL termination is never required for inputs or outputs

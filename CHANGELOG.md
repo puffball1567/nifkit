@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Clarify that the C ABI is a C/C++ compatibility interface, while new
+  integrations in other languages should be language-native implementations or
+  ports.
+
 ## 0.2.0 - 2026-08-01
 
 - Add finite, caller-configurable `CodecLimits` to Nim and C codec APIs.

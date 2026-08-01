@@ -1,8 +1,8 @@
 # nifkit
 
-`nifkit` is a spec-based NIF/BIF toolkit for making NIF usable from multiple
-programming languages. It provides a Nim API and a stable C ABI for converting,
-validating, and inspecting NIF text and BIF binary payloads.
+`nifkit` is a spec-based NIF/BIF toolkit. It provides a Nim API and a stable C
+ABI for converting, validating, and inspecting NIF text and BIF binary
+payloads.
 
 ## Scope
 
@@ -10,8 +10,7 @@ validating, and inspecting NIF text and BIF binary payloads.
 - `bifToNif`: BIF bytes to canonical NIF text
 - `validateBif`: BIF validation without semantic interpretation
 - finite `CodecLimits` and structured `NifKitError` failures for untrusted input
-- C ABI for `NIF text -> BIF bytes`, `BIF bytes -> NIF text`, and BIF
-  validation
+- C ABI compatibility layer for C-compatible consumers
 
 `nifkit` is intentionally a library, not a standalone user-facing CLI. It is
 designed to be embedded by databases, drivers, adapters, language bindings, and
@@ -114,16 +113,20 @@ each resource limit without requiring callers to parse messages. See
 [the typed serializer design](docs/typed-serializer-design.md) for the planned
 general data-exchange profile.
 
-Applications should call the Nim API or C ABI directly. Applications may store
-BIF however they want; semantic interpretation belongs to the embedding
-application or another NIF/BIF implementation.
+Nim applications should call the Nim API directly. Applications may store BIF
+however they want; semantic interpretation belongs to the embedding application
+or another NIF/BIF implementation.
 
 ## C ABI
 
-`include/nifkit.h` exposes byte-length APIs for C, C++, Rust, Node native
-addons, and FFI consumers. BIF is binary data, so neither input nor output uses
-NUL termination. Every successful output buffer must be released with
-`nifkit_free`.
+`include/nifkit.h` exposes byte-length APIs for C and C++ consumers. It is a
+compatibility interface, not the recommended general integration path for other
+languages. When another language needs NIF/BIF support, prefer a native
+implementation or port in that language, validated against the NIF/BIF
+specification and conformance corpus.
+
+BIF is binary data, so neither input nor output uses NUL termination. Every
+successful output buffer must be released with `nifkit_free`.
 
 ```c
 int nifkit_nif_to_bif(const void *nif_data, size_t nif_len,
