@@ -4,6 +4,27 @@ import nifkit
 
 var lastError {.threadvar.}: string
 
+type NifkitLimits {.bycopy.} = object
+  maxInputBytes, maxOutputBytes, maxNestingDepth, maxTokens: csize_t
+  maxPoolEntries, maxPoolBytes, maxStringBytes, maxIndexEntries: csize_t
+
+proc asInt(value: csize_t): int =
+  if value > csize_t(high(int)):
+    raiseCodecError(nkeMalformedInput, "C limit exceeds platform size")
+  int(value)
+
+proc decodeLimits(value: ptr NifkitLimits): CodecLimits =
+  if value == nil: return defaultCodecLimits()
+  CodecLimits(
+    maxInputBytes: asInt(value.maxInputBytes),
+    maxOutputBytes: asInt(value.maxOutputBytes),
+    maxNestingDepth: asInt(value.maxNestingDepth),
+    maxTokens: asInt(value.maxTokens),
+    maxPoolEntries: asInt(value.maxPoolEntries),
+    maxPoolBytes: asInt(value.maxPoolBytes),
+    maxStringBytes: asInt(value.maxStringBytes),
+    maxIndexEntries: asInt(value.maxIndexEntries))
+
 proc setError(message: string): cint =
   lastError = message
   1
@@ -60,6 +81,40 @@ proc nifkit_validate_bif*(bifData: pointer; bifLen: csize_t): cint
                          {.exportc, dynlib.} =
   try:
     validateBif(copyInput(bifData, bifLen))
+    lastError.setLen(0)
+    0
+  except CatchableError:
+    setError(getCurrentExceptionMsg())
+
+proc nifkit_nif_to_bif_with_limits*(nifData: pointer; nifLen: csize_t;
+                                    outBif: ptr pointer; outLen: ptr csize_t;
+                                    limits: ptr NifkitLimits): cint
+                                    {.exportc, dynlib.} =
+  try:
+    resetOutput(outBif, outLen)
+    copyOutput(nifToBif(copyInput(nifData, nifLen), decodeLimits(limits)), outBif, outLen)
+    lastError.setLen(0)
+    0
+  except CatchableError:
+    setError(getCurrentExceptionMsg())
+
+proc nifkit_bif_to_nif_with_limits*(bifData: pointer; bifLen: csize_t;
+                                    outNif: ptr pointer; outLen: ptr csize_t;
+                                    limits: ptr NifkitLimits): cint
+                                    {.exportc, dynlib.} =
+  try:
+    resetOutput(outNif, outLen)
+    copyOutput(bifToNif(copyInput(bifData, bifLen), decodeLimits(limits)), outNif, outLen)
+    lastError.setLen(0)
+    0
+  except CatchableError:
+    setError(getCurrentExceptionMsg())
+
+proc nifkit_validate_bif_with_limits*(bifData: pointer; bifLen: csize_t;
+                                      limits: ptr NifkitLimits): cint
+                                      {.exportc, dynlib.} =
+  try:
+    validateBif(copyInput(bifData, bifLen), decodeLimits(limits))
     lastError.setLen(0)
     0
   except CatchableError:

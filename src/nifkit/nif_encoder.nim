@@ -22,6 +22,9 @@ const
 type Encoder = object
   input: string
   pos: int
+  limits: CodecLimits
+  depth: int
+  poolBytes: int
   doc: BifDocument
   tags: Table[string, int]
   strings: Table[string, int]
@@ -146,17 +149,29 @@ proc bare(e: var Encoder): BareAtom =
       inc e.pos
   if e.pos == start: fail("expected NIF atom")
 
-proc poolId(pool: var seq[string]; ids: var Table[string, int]; value: string): int =
+proc poolId(e: var Encoder; pool: var seq[string]; ids: var Table[string, int];
+            value: string): int =
   if value in ids: return ids[value]
+  if value.len > e.limits.maxStringBytes:
+    raiseCodecError(nkeStringLimit, "NIF string exceeds configured limit", e.pos)
+  if pool.len >= e.limits.maxPoolEntries or
+      value.len > e.limits.maxPoolBytes - e.poolBytes:
+    raiseCodecError(nkePoolLimit, "NIF pools exceed configured limit", e.pos)
   result = pool.len + 1
   pool.add value
+  e.poolBytes += value.len
   ids[value] = result
 
+proc addToken(e: var Encoder; word: uint32) =
+  if e.doc.tokens.len >= e.limits.maxTokens:
+    raiseCodecError(nkeTokenLimit, "NIF token count exceeds configured limit", e.pos)
+  e.doc.tokens.add word
+
 proc emit(e: var Encoder; kind: uint32; value: uint64) =
-  e.doc.tokens.add (uint32(value and Mask28) shl 4) or kind
+  e.addToken (uint32(value and Mask28) shl 4) or kind
   var rest = value shr 28
   while rest > 0:
-    e.doc.tokens.add (uint32(rest and Mask28) shl 4) or KindExtended
+    e.addToken (uint32(rest and Mask28) shl 4) or KindExtended
     rest = rest shr 28
 
 proc emitLineInfo(e: var Encoder; value: LineInfo) =
@@ -166,7 +181,7 @@ proc emitLineInfo(e: var Encoder; value: LineInfo) =
     fail("NIF line-info line exceeds the supported BIF layout")
   let fileId =
     if value.filename.len == 0: 0
-    else: poolId(e.doc.filenames, e.files, value.filename)
+    else: e.poolId(e.doc.filenames, e.files, value.filename)
   if fileId > 16383:
     fail("NIF line-info filename pool id exceeds the supported BIF layout")
   if value.comment.len == 0 and value.column <= 127 and value.line <= 16383 and fileId <= 127:
@@ -177,16 +192,16 @@ proc emitLineInfo(e: var Encoder; value: LineInfo) =
   else:
     let commentId =
       if value.comment.len == 0: 0
-      else: poolId(e.doc.strings, e.strings, value.comment)
+      else: e.poolId(e.doc.strings, e.strings, value.comment)
     if commentId > int(Mask28):
       fail("NIF line-info comment pool id exceeds the supported BIF layout")
     let packed = uint64(value.column) or
       (uint64(fileId) shl 10) or
       (uint64(value.line) shl 24)
-    e.doc.tokens.add (uint32(packed and Mask28) shl 4) or KindLineInfo
-    e.doc.tokens.add (uint32((packed shr 28) and Mask28) shl 4) or KindExtended
+    e.addToken (uint32(packed and Mask28) shl 4) or KindLineInfo
+    e.addToken (uint32((packed shr 28) and Mask28) shl 4) or KindExtended
     if commentId > 0:
-      e.doc.tokens.add (uint32(commentId) shl 4) or KindExtended
+      e.addToken (uint32(commentId) shl 4) or KindExtended
 
 proc emitSigned(e: var Encoder; value: int64) =
   let bits =
@@ -203,8 +218,8 @@ proc emitText(e: var Encoder; kind: uint32; value: string; symbol = false) =
     for i, c in value: packed = packed or (uint64(ord(c)) shl (3 + i * 8))
     e.emit(kind, packed)
   else:
-    let id = if symbol: poolId(e.doc.syms, e.syms, value)
-             else: poolId(e.doc.strings, e.strings, value)
+    let id = if symbol: e.poolId(e.doc.syms, e.syms, value)
+             else: e.poolId(e.doc.strings, e.strings, value)
     e.emit(kind, uint64(id) shl 1)
 
 proc parseNode(e: var Encoder; parent: LineInfo)
@@ -222,6 +237,10 @@ proc attachSuffix(e: var Encoder; parent: LineInfo): LineInfo =
     e.emitLineInfo(result)
 
 proc parseCompound(e: var Encoder; parent: LineInfo) =
+  if e.depth >= e.limits.maxNestingDepth:
+    raiseCodecError(nkeNestingTooDeep, "NIF nesting exceeds configured depth", e.pos)
+  inc e.depth
+  defer: dec e.depth
   inc e.pos # '('
   e.skipSpace()
   let tagAtom = e.bare()
@@ -230,7 +249,7 @@ proc parseCompound(e: var Encoder; parent: LineInfo) =
       (tag.startsWith(".") and not isDirectiveTagText(tagAtom)) or
       (not tag.startsWith(".") and not isIdentText(tagAtom)):
     fail("invalid NIF tag name")
-  let tagId = poolId(e.doc.tags, e.tags, tag)
+  let tagId = e.poolId(e.doc.tags, e.tags, tag)
   if tagId > 511: fail("NIF has more than 511 BIF tags")
   let head = e.doc.tokens.len
   e.emit(KindTag, uint64(tagId))
@@ -248,6 +267,8 @@ proc parseCompound(e: var Encoder; parent: LineInfo) =
   if jump > 524287:
     let high = uint64(jump shr 19)
     if high > Mask28: fail("BIF tag jump exceeds version 5 limit")
+    if e.doc.tokens.len >= e.limits.maxTokens:
+      raiseCodecError(nkeTokenLimit, "NIF token count exceeds configured limit", e.pos)
     e.doc.tokens.insert((uint32(high) shl 4) or KindExtended, head + 1)
 
 proc parseNode(e: var Encoder; parent: LineInfo) =
@@ -365,8 +386,11 @@ proc globalIndex(e: Encoder): seq[tuple[symbolId: uint64, tokenPos: uint64, visi
         result.add (id, uint64(pos), visibility)
     pos = value.next
 
-proc encodeNifToBif(nifText: string): string =
-  var e = Encoder(input: nifText)
+proc encodeNifToBif(nifText: string; limits: CodecLimits): string =
+  validLimits(limits)
+  if nifText.len > limits.maxInputBytes:
+    raiseCodecError(nkeInputTooLarge, "NIF input exceeds configured limit")
+  var e = Encoder(input: nifText, limits: limits)
   e.skipSpace()
   while e.pos < e.input.len:
     e.parseNode(LineInfo())
@@ -380,6 +404,8 @@ proc encodeNifToBif(nifText: string): string =
       pools.add value
   let indexOffset = headerSize + pad + e.doc.tokens.len * 4 + pools.len
   let index = e.globalIndex()
+  if index.len > limits.maxIndexEntries:
+    raiseCodecError(nkeIndexLimit, "NIF index count exceeds configured limit")
   result = "NIFBIN\0\5"
   result.addLe64(uint64(indexOffset))
   result.addVarint(uint64(e.doc.tokens.len))
@@ -396,9 +422,11 @@ proc encodeNifToBif(nifText: string): string =
     result.addVarint(entry.tokenPos)
     result.addVarint(entry.visibility)
 
-proc nifToBif*(nifText: string): string =
+proc nifToBif*(nifText: string; limits = defaultCodecLimits()): string =
   try:
-    encodeNifToBif(nifText)
+    result = encodeNifToBif(nifText, limits)
+    if result.len > limits.maxOutputBytes:
+      raiseCodecError(nkeOutputTooLarge, "BIF output exceeds configured limit")
   except BifError:
     raise
   except CatchableError:
