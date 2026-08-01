@@ -9,6 +9,7 @@ validating, and inspecting NIF text and BIF binary payloads.
 - `nifToBif`: NIF text to BIF bytes
 - `bifToNif`: BIF bytes to canonical NIF text
 - `validateBif`: BIF validation without semantic interpretation
+- finite `CodecLimits` and structured `NifKitError` failures for untrusted input
 - C ABI for `NIF text -> BIF bytes`, `BIF bytes -> NIF text`, and BIF
   validation
 
@@ -102,7 +103,16 @@ import nifkit
 let bif = nifToBif("(record title \"NIF\")")
 let nif = bifToNif(bif)
 validateBif(bif)
+
+var limits = defaultCodecLimits()
+limits.maxOutputBytes = 1_048_576
+let boundedNif = bifToNif(bif, limits)
 ```
+
+`NifKitError.kind` distinguishes malformed input, unsupported versions, and
+each resource limit without requiring callers to parse messages. See
+[the typed serializer design](docs/typed-serializer-design.md) for the planned
+general data-exchange profile.
 
 Applications should call the Nim API or C ABI directly. Applications may store
 BIF however they want; semantic interpretation belongs to the embedding

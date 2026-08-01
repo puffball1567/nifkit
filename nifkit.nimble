@@ -34,5 +34,8 @@ task verify, "Run the full NIFKit verification suite":
   exec "nimble matrixDemo -y"
   exec "nimble cabiContract -y"
 
+task arcMemory, "Run repeated ARC codec paths":
+  exec "nim c --mm:arc -d:release --nimcache:nimcache/arc-memory -r tests/test_arc_memory.nim"
+
 task matrixDemo, "Run the NIFKit codec matrix demo":
   exec "nim c --nimcache:nimcache/codec_matrix_demo -r examples/codec_matrix_demo.nim"
