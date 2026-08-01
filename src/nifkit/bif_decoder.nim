@@ -151,21 +151,6 @@ proc widePayload(doc: BifDocument; pos: int): tuple[value: uint64, next: int] =
     shift += 28
     inc result.next
 
-proc escapeString(value: string): string =
-  const Hex = "0123456789ABCDEF"
-  for c in value:
-    let b = ord(c)
-    if c == '"': result.add "\\^"
-    elif c == '\\': result.add "\\|"
-    elif b == 10: result.add "\\n"
-    elif b == 9: result.add "\\t"
-    elif b == 13: result.add "\\r"
-    elif b < 32 or c in {'(', ')', '[', ']', '{', '}', '~', '#', '\'', ':', '@'}:
-      result.add '\\'
-      result.add Hex[b shr 4]
-      result.add Hex[b and 15]
-    else: result.add c
-
 proc isAsciiLetter(c: char): bool =
   c in {'A'..'Z'} or c in {'a'..'z'}
 
@@ -174,53 +159,6 @@ proc isIdentStartByte(c: char): bool =
 
 proc isIdentCharByte(c: char): bool =
   isIdentStartByte(c) or c in {'0'..'9'}
-
-proc addEscapedByte(dest: var string; c: char) =
-  const Hex = "0123456789ABCDEF"
-  let b = ord(c)
-  dest.add '\\'
-  dest.add Hex[b shr 4]
-  dest.add Hex[b and 15]
-
-proc renderIdentifier(value: string): string =
-  if value.len == 0: fail("invalid empty BIF identifier")
-  for i, c in value:
-    if (i == 0 and isIdentStartByte(c)) or (i > 0 and isIdentCharByte(c)):
-      result.add c
-    else:
-      result.addEscapedByte c
-
-proc renderSymbolName(value: string): string =
-  let separator = value.find('.')
-  if separator <= 0: fail("invalid BIF symbol")
-  for i, c in value:
-    if i == separator:
-      result.add '.'
-    elif i < separator:
-      if (i == 0 and isIdentStartByte(c)) or (i > 0 and isIdentCharByte(c)):
-        result.add c
-      else:
-        result.addEscapedByte c
-    elif c == '.' or isIdentCharByte(c):
-      result.add c
-    else:
-      result.addEscapedByte c
-
-proc renderTagName(value: string): string =
-  if value.len == 0: fail("invalid empty BIF tag")
-  if value[0] == '.':
-    if value.len == 1: fail("invalid empty BIF directive tag")
-    if not isIdentStartByte(value[1]):
-      fail("invalid BIF directive tag")
-    result.add '.'
-    for i in 1 ..< value.len:
-      let c = value[i]
-      if isIdentCharByte(c):
-        result.add c
-      else:
-        result.addEscapedByte c
-  else:
-    result = renderIdentifier(value)
 
 proc textValue(doc: BifDocument; value: uint64; symbols: bool): string =
   if (value and 1) == 1:
@@ -262,9 +200,6 @@ proc takeLineInfo(doc: BifDocument; pos: var int; parent: LineInfo):
   result.value.filename =
     if fileId == 0: ""
     else: doc.filenames[fileId - 1]
-
-proc render(doc: BifDocument; pos: int; limit: int; parent: LineInfo; depth: int;
-            limits: CodecLimits): tuple[text: string, next: int]
 
 proc appendEscaped(destination: var string; value: string; limits: CodecLimits) =
   const Hex = "0123456789ABCDEF"
@@ -378,51 +313,6 @@ proc renderInto(doc: BifDocument; pos: int; limit: int; parent: LineInfo;
   let lineInfo = doc.takeLineInfo(next, parent)
   if lineInfo.present: destination.boundedAdd(renderLineInfo(lineInfo.value, parent), limits)
   next
-
-proc render(doc: BifDocument; pos: int; limit: int; parent: LineInfo; depth: int;
-            limits: CodecLimits): tuple[text: string, next: int] =
-  if depth > limits.maxNestingDepth:
-    failLimit(nkeNestingTooDeep, "BIF nesting exceeds configured depth", pos)
-  if pos >= limit: fail("BIF node exceeds parent boundary")
-  let k = kind(doc.tokens[pos])
-  let wide = doc.widePayload(pos)
-  var next = wide.next
-  case k
-  of KindDot: result.text = "."
-  of KindChar: result.text = "'" & escapeString($char(wide.value and 0xff)) & "'"
-  of KindString: result.text = "\"" & escapeString(doc.textValue(wide.value, false)) & "\""
-  of KindIdent: result.text = renderIdentifier(doc.textValue(wide.value, false))
-  of KindSymbol: result.text = renderSymbolName(doc.textValue(wide.value, true))
-  of KindSymbolDef: result.text = ":" & renderSymbolName(doc.textValue(wide.value, true))
-  of KindInt:
-    let bits = min(64, 28 * (wide.next - pos))
-    let signed = if bits == 64: cast[int64](wide.value) else:
-      let sign = 1'u64 shl (bits - 1)
-      if (wide.value and sign) == 0: int64(wide.value)
-      else: int64(wide.value) - (1'i64 shl bits)
-    result.text = $signed
-  of KindUInt: result.text = $wide.value & "u"
-  of KindFloat: result.text = $cast[float64](wide.value)
-  of KindTag:
-    let tagId = int(wide.value and 0x1ff)
-    if tagId <= 0 or tagId > doc.tags.len: fail("invalid BIF tag id")
-    let jump = int(wide.value shr 9)
-    let lineInfo = doc.takeLineInfo(next, parent)
-    let childParent = if lineInfo.present: lineInfo.value else: parent
-    let bodyEnd = next + jump
-    if bodyEnd > limit or bodyEnd > doc.tokens.len: fail("invalid BIF tag jump")
-    result.text = "(" & renderTagName(doc.tags[tagId - 1])
-    if lineInfo.present: result.text.add renderLineInfo(lineInfo.value, parent)
-    while next < bodyEnd:
-      let child = doc.render(next, bodyEnd, childParent, depth + 1, limits)
-      result.text.add " " & child.text
-      next = child.next
-    if next != bodyEnd: fail("invalid BIF tag body")
-    result.text.add ")"
-  else: fail("unsupported BIF token kind")
-  let lineInfo = doc.takeLineInfo(next, parent)
-  if lineInfo.present: result.text.add renderLineInfo(lineInfo.value, parent)
-  result.next = next
 
 proc bifToNif*(bifBytes: string; limits = defaultCodecLimits()): string =
   let document = parseBif(bifBytes, limits)
