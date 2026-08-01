@@ -47,6 +47,36 @@ suite "codec limits and structured errors":
     expectKind(nkeUnsupportedVersion):
       validateBif(bif)
 
+  test "BIF pool, string, token, and index limits have separate kinds":
+    let stringBif = nifToBif("\"abcdef\"")
+    var stringLimits = defaultCodecLimits()
+    stringLimits.maxStringBytes = 5
+    expectKind(nkeStringLimit):
+      validateBif(stringBif, stringLimits)
+    var poolLimits = defaultCodecLimits()
+    poolLimits.maxPoolBytes = 5
+    expectKind(nkePoolLimit):
+      validateBif(stringBif, poolLimits)
+    var tokenLimits = defaultCodecLimits()
+    tokenLimits.maxTokens = 0
+    expectKind(nkeTokenLimit):
+      validateBif(stringBif, tokenLimits)
+    let indexedBif = nifToBif("(defs :pkg.0.public)")
+    var indexLimits = defaultCodecLimits()
+    indexLimits.maxIndexEntries = 0
+    expectKind(nkeIndexLimit):
+      validateBif(indexedBif, indexLimits)
+
+  test "magic and endianness remain malformed input":
+    var magic = nifToBif("")
+    magic[0] = 'X'
+    expectKind(nkeMalformedInput):
+      validateBif(magic)
+    var endian = nifToBif("")
+    endian[6] = char(1)
+    expectKind(nkeMalformedInput):
+      validateBif(endian)
+
   test "limit errors do not poison a following conversion":
     var limits = defaultCodecLimits()
     limits.maxOutputBytes = 1
