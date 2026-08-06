@@ -10,6 +10,8 @@ type
     state: State
     note: Option[string]
     items: seq[int]
+  RefRecord = ref object
+    name: string
 
 suite "typed serializer v1":
   test "round-trips a nested data profile value":
@@ -27,3 +29,11 @@ suite "typed serializer v1":
       discard fromNif("(nifkit\\2Ddata 1 (object \"Record\" (field \"title\" \"x\")))", Record)
     expect NifKitError:
       discard fromNif("(nifkit\\2Ddata 1 (object \"Record\" (field \"title\" \"x\") (field \"count\" 1) (field \"enabled\" true) (field \"state\" (enum \"State\" \"stOpen\")) (field \"note\" none) (field \"items\" (seq)) (field \"extra\" 1)))", Record)
+
+  test "round-trips nil and non-nil ref objects":
+    let empty: RefRecord = nil
+    check fromBif(toBif(empty), RefRecord).isNil
+    let value = RefRecord(name: "child")
+    let decoded = fromNif(toNif(value), RefRecord)
+    check not decoded.isNil
+    check decoded.name == "child"

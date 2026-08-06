@@ -40,7 +40,8 @@ proc quote(value: string; limits: CodecLimits; path: string): string =
     elif c == '\n': result.boundedAdd("\\n", limits)
     elif c == '\t': result.boundedAdd("\\t", limits)
     elif c == '\r': result.boundedAdd("\\r", limits)
-    elif b < 32: result.boundedAdd("\\" & "0123456789ABCDEF"[b shr 4] & "0123456789ABCDEF"[b and 15], limits)
+    elif b < 32 or c in {'(', ')', '[', ']', '{', '}', '~', '#', '\'', ':', '@'}:
+      result.boundedAdd("\\" & "0123456789ABCDEF"[b shr 4] & "0123456789ABCDEF"[b and 15], limits)
     else: result.boundedAdd(c, limits)
   result.boundedAdd('"', limits)
 
@@ -156,6 +157,11 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
     var values = @[nodeAtom("tuple")]
     for name, item in fieldPairs(value): values.add encodeValue(item, limits, path & "." & name)
     DataNode(kind: dkCompound, children: values)
+  elif T is ref:
+    if value.isNil:
+      nodeAtom("nil")
+    else:
+      compound("ref", encodeValue(value[], limits, path))
   elif T is object:
     var values = @[nodeAtom("object"), nodeString(name(T))]
     var count = 0
@@ -242,6 +248,13 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
       field = decodeValue[typeof(field)](values[index], limits, options, path & "." & fieldName)
       inc index
     if index != values.len: typedFail(nkeArrayLengthMismatch, "tuple length mismatch", path, node.offset)
+  elif T is ref:
+    if node.kind == dkAtom and node.text == "nil":
+      return nil
+    let values = require(node, "ref", path)
+    if values.len != 2: typedFail(nkeTypeMismatch, "invalid ref object", path, node.offset)
+    new(result)
+    result[] = decodeValue[typeof(result[])](values[1], limits, options, path)
   elif T is object:
     let values = require(node, "object", path)
     if values.len < 2 or values[1].kind != dkString: typedFail(nkeTypeMismatch, "invalid object", path, node.offset)
