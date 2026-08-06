@@ -17,6 +17,8 @@ type
     children: seq[DataNode]
     offset: int
 
+var activeReferences {.threadvar.}: seq[pointer]
+
 proc defaultTypedCodecOptions*(): TypedCodecOptions =
   TypedCodecOptions(requireTypeNames: true)
 
@@ -161,6 +163,14 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
     if value.isNil:
       nodeAtom("nil")
     else:
+      let address = cast[pointer](value)
+      for active in activeReferences:
+        if active == address:
+          typedFail(nkeCyclicReference, "cyclic ref object is unsupported", path)
+      if activeReferences.len >= limits.maxTrackedReferences:
+        typedFail(nkeTokenLimit, "reference tracking exceeds configured limit", path)
+      activeReferences.add address
+      defer: activeReferences.setLen(activeReferences.len - 1)
       compound("ref", encodeValue(value[], limits, path))
   elif T is object:
     var values = @[nodeAtom("object"), nodeString(name(T))]
@@ -175,6 +185,8 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
 
 proc toNif*[T](value: T; limits = defaultCodecLimits()): string =
   validLimits(limits)
+  if activeReferences.len != 0:
+    activeReferences.setLen(0)
   let root = compound(DataRootTag, nodeAtom("1"), encodeValue(value, limits, "$"))
   root.render(result, limits, "$")
 
