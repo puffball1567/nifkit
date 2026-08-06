@@ -10,7 +10,16 @@ type
     nkeTokenLimit,
     nkePoolLimit,
     nkeStringLimit,
-    nkeIndexLimit
+    nkeIndexLimit,
+    nkeTypeMismatch,
+    nkeUnknownField,
+    nkeMissingField,
+    nkeUnknownEnumMember,
+    nkeArrayLengthMismatch,
+    nkeUnsupportedType,
+    nkeUnsupportedDataProfile,
+    nkeCyclicReference,
+    nkeNonFiniteFloat
 
   ## Kept as the public compatibility base exception.
   BifError* = object of ValueError
@@ -19,6 +28,7 @@ type
   NifKitError* = object of BifError
     kind*: NifKitErrorKind
     offset*: int
+    path*: string
 
   CodecLimits* = object
     maxInputBytes*: int
@@ -29,6 +39,9 @@ type
     maxPoolBytes*: int
     maxStringBytes*: int
     maxIndexEntries*: int
+    maxContainerItems*: int
+    maxObjectFields*: int
+    maxTrackedReferences*: int
 
 const
   SupportedBifVersion* = 5
@@ -43,20 +56,27 @@ proc defaultCodecLimits*(): CodecLimits =
     maxPoolEntries: 1_000_000,
     maxPoolBytes: 32 * 1024 * 1024,
     maxStringBytes: 4 * 1024 * 1024,
-    maxIndexEntries: 1_000_000
+    maxIndexEntries: 1_000_000,
+    maxContainerItems: 1_000_000,
+    maxObjectFields: 1_024,
+    maxTrackedReferences: 100_000
   )
 
-proc raiseCodecError*(kind: NifKitErrorKind; message: string; offset = -1) {.noreturn.} =
+proc raiseCodecError*(kind: NifKitErrorKind; message: string; offset = -1;
+                      path = "$") {.noreturn.} =
   var error = newException(NifKitError, message)
   error.kind = kind
   error.offset = offset
+  error.path = path
   raise error
 
 proc validLimits*(limits: CodecLimits) =
   if limits.maxInputBytes < 0 or limits.maxOutputBytes < 0 or
       limits.maxNestingDepth < 0 or limits.maxTokens < 0 or
       limits.maxPoolEntries < 0 or limits.maxPoolBytes < 0 or
-      limits.maxStringBytes < 0 or limits.maxIndexEntries < 0:
+      limits.maxStringBytes < 0 or limits.maxIndexEntries < 0 or
+      limits.maxContainerItems < 0 or limits.maxObjectFields < 0 or
+      limits.maxTrackedReferences < 0:
     raiseCodecError(nkeMalformedInput, "codec limits must not be negative")
 
 proc boundedAdd*(destination: var string; value: string; limits: CodecLimits) =

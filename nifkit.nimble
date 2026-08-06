@@ -14,6 +14,7 @@ task test, "Run the NIF/BIF codec test suite":
   exec "nim c --nimcache:nimcache/test_spec_fixtures -r tests/test_spec_fixtures.nim"
   exec "nim c --nimcache:nimcache/test_malformed_fuzz -r tests/test_malformed_fuzz.nim"
   exec "nim c --nimcache:nimcache/test_codec_limits -r tests/test_codec_limits.nim"
+  exec "nim c --nimcache:nimcache/test_typed_serializer -r tests/test_typed_serializer.nim"
 
 task cabiContract, "Build and run the NIFKit C ABI contract":
   when defined(windows):

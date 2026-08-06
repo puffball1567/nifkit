@@ -21,8 +21,9 @@ bounded NIF/BIF codec.
 
 ## Canonical profile
 
-The root is `(nifkit-data 1 value)`. Version `1` identifies these mapping
-rules. Writers emit UTF-8 byte strings in canonical NIF escaping, fields in
+The root is `(nifkit\2Ddata 1 value)`. The escaped hyphen is required by NIF
+tag grammar; its decoded tag name is `nifkit-data`. Version `1` identifies
+these mapping rules. Writers emit UTF-8 byte strings in canonical NIF escaping, fields in
 declaration order, and `Table` entries sorted by their canonical encoded key.
 
 | Nim value | NIF representation |

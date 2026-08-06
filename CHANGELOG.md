@@ -5,6 +5,8 @@
 - Clarify that the C ABI is a C/C++ compatibility interface, while new
   integrations in other languages should be language-native implementations or
   ports.
+- Add the initial Nim-only typed serializer v1 API with strict object decoding
+  and bounded NIF/BIF round trips.
 
 ## 0.2.0 - 2026-08-01
 
