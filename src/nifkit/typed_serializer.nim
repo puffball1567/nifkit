@@ -1,0 +1,286 @@
+## Typed NIF data profile v1.  This module is intentionally Nim-only.
+
+import std/[options, strutils, typetraits, math]
+import ./[codec_limits, nif_encoder, bif_decoder]
+
+const DataRootTag = "nifkit\\2Ddata"
+
+type
+  TypedCodecOptions* = object
+    allowUnknownFields*: bool
+    requireTypeNames*: bool
+
+  DataKind = enum dkAtom, dkString, dkChar, dkCompound
+  DataNode = ref object
+    kind: DataKind
+    text: string
+    children: seq[DataNode]
+    offset: int
+
+proc defaultTypedCodecOptions*(): TypedCodecOptions =
+  TypedCodecOptions(requireTypeNames: true)
+
+proc typedFail(kind: NifKitErrorKind; message, path: string; offset = -1) {.noreturn.} =
+  raiseCodecError(kind, message, offset, path)
+
+proc require(node: DataNode; tag, path: string): seq[DataNode] =
+  if node.kind != dkCompound or node.children.len == 0 or
+      node.children[0].kind != dkAtom or node.children[0].text != tag:
+    typedFail(nkeTypeMismatch, "expected " & tag, path, node.offset)
+  result = node.children
+
+proc quote(value: string; limits: CodecLimits; path: string): string =
+  if value.len > limits.maxStringBytes:
+    typedFail(nkeStringLimit, "string exceeds configured limit", path)
+  result = "\""
+  for c in value:
+    let b = ord(c)
+    if c == '"': result.boundedAdd("\\^", limits)
+    elif c == '\\': result.boundedAdd("\\|", limits)
+    elif c == '\n': result.boundedAdd("\\n", limits)
+    elif c == '\t': result.boundedAdd("\\t", limits)
+    elif c == '\r': result.boundedAdd("\\r", limits)
+    elif b < 32: result.boundedAdd("\\" & "0123456789ABCDEF"[b shr 4] & "0123456789ABCDEF"[b and 15], limits)
+    else: result.boundedAdd(c, limits)
+  result.boundedAdd('"', limits)
+
+proc render(node: DataNode; destination: var string; limits: CodecLimits; path: string) =
+  case node.kind
+  of dkAtom: destination.boundedAdd(node.text, limits)
+  of dkString: destination.boundedAdd(quote(node.text, limits, path), limits)
+  of dkChar:
+    destination.boundedAdd('\'', limits)
+    destination.boundedAdd(quote(node.text, limits, path)[1 .. ^2], limits)
+    destination.boundedAdd('\'', limits)
+  of dkCompound:
+    destination.boundedAdd('(', limits)
+    for i, child in node.children:
+      if i > 0: destination.boundedAdd(' ', limits)
+      child.render(destination, limits, path)
+    destination.boundedAdd(')', limits)
+
+proc skipSpace(source: string; pos: var int) =
+  while pos < source.len and source[pos] in {' ', '\t', '\r', '\n'}: inc pos
+
+proc hex(c: char): int =
+  if c in {'0'..'9'}: ord(c) - ord('0')
+  elif c in {'A'..'F'}: ord(c) - ord('A') + 10
+  else: -1
+
+proc parseEscaped(source: string; pos: var int; terminator: char; path: string): string =
+  while pos < source.len and source[pos] != terminator:
+    if source[pos] != '\\':
+      result.add source[pos]
+      inc pos
+    else:
+      inc pos
+      if pos >= source.len: typedFail(nkeMalformedInput, "truncated escape", path, pos)
+      let c = source[pos]
+      inc pos
+      case c
+      of 'n': result.add '\n'
+      of 't': result.add '\t'
+      of 'r': result.add '\r'
+      of '^': result.add '"'
+      of '|': result.add '\\'
+      of '0'..'9', 'A'..'F':
+        if pos >= source.len: typedFail(nkeMalformedInput, "truncated hex escape", path, pos)
+        let lo = hex(source[pos]); let hi = hex(c); inc pos
+        if hi < 0 or lo < 0: typedFail(nkeMalformedInput, "invalid hex escape", path, pos)
+        result.add char((hi shl 4) or lo)
+      else: typedFail(nkeMalformedInput, "unsupported escape", path, pos)
+  if pos >= source.len: typedFail(nkeMalformedInput, "unterminated literal", path, pos)
+
+proc parseNode(source: string; pos: var int; limits: CodecLimits; depth: int): DataNode =
+  if depth > limits.maxNestingDepth: typedFail(nkeNestingTooDeep, "typed NIF nesting exceeds limit", "$", pos)
+  skipSpace(source, pos)
+  if pos >= source.len: typedFail(nkeMalformedInput, "expected typed NIF value", "$", pos)
+  result = DataNode(offset: pos)
+  case source[pos]
+  of '(':
+    result.kind = dkCompound; inc pos
+    while true:
+      skipSpace(source, pos)
+      if pos >= source.len: typedFail(nkeMalformedInput, "unterminated compound", "$", pos)
+      if source[pos] == ')': inc pos; break
+      if result.children.len >= limits.maxContainerItems: typedFail(nkeTokenLimit, "container exceeds configured limit", "$", pos)
+      result.children.add parseNode(source, pos, limits, depth + 1)
+  of '"':
+    result.kind = dkString; inc pos; result.text = parseEscaped(source, pos, '"', "$"); inc pos
+  of '\'':
+    result.kind = dkChar; inc pos; result.text = parseEscaped(source, pos, '\'', "$"); inc pos
+    if result.text.len != 1: typedFail(nkeTypeMismatch, "character must contain one byte", "$", result.offset)
+  else:
+    result.kind = dkAtom
+    let start = pos
+    while pos < source.len and source[pos] notin {' ', '\t', '\r', '\n', '(', ')'}: inc pos
+    if start == pos: typedFail(nkeMalformedInput, "expected atom", "$", pos)
+    result.text = source[start ..< pos]
+
+proc nodeAtom(value: string): DataNode = DataNode(kind: dkAtom, text: value)
+proc nodeString(value: string): DataNode = DataNode(kind: dkString, text: value)
+proc compound(tag: string; values: varargs[DataNode]): DataNode =
+  DataNode(kind: dkCompound, children: @[nodeAtom(tag)] & @values)
+
+proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode
+
+proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
+  when T is bool:
+    nodeAtom(if value: "true" else: "false")
+  elif T is SomeUnsignedInt:
+    nodeAtom($value & "u")
+  elif T is SomeSignedInt:
+    nodeAtom($value)
+  elif T is SomeFloat:
+    if classify(value) in {fcNan, fcInf, fcNegInf}:
+      typedFail(nkeNonFiniteFloat, "non-finite float is unsupported", path)
+    nodeAtom($value)
+  elif T is string:
+    nodeString(value)
+  elif T is char:
+    DataNode(kind: dkChar, text: $value)
+  elif T is enum:
+    compound("enum", nodeString(name(T)), nodeString($value))
+  elif T is Option:
+    if value.isSome: compound("some", encodeValue(value.get, limits, path)) else: nodeAtom("none")
+  elif T is seq:
+    var values = @[nodeAtom("seq")]
+    if value.len > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path)
+    for i, item in value: values.add encodeValue(item, limits, path & "[" & $i & "]")
+    DataNode(kind: dkCompound, children: values)
+  elif T is array:
+    var values = @[nodeAtom("array")]
+    for i, item in value: values.add encodeValue(item, limits, path & "[" & $i & "]")
+    DataNode(kind: dkCompound, children: values)
+  elif T is tuple:
+    var values = @[nodeAtom("tuple")]
+    for name, item in fieldPairs(value): values.add encodeValue(item, limits, path & "." & name)
+    DataNode(kind: dkCompound, children: values)
+  elif T is object:
+    var values = @[nodeAtom("object"), nodeString(name(T))]
+    var count = 0
+    for fieldName, fieldValue in fieldPairs(value):
+      inc count
+      if count > limits.maxObjectFields: typedFail(nkeTokenLimit, "object exceeds configured field limit", path)
+      values.add compound("field", nodeString(fieldName), encodeValue(fieldValue, limits, path & "." & fieldName))
+    DataNode(kind: dkCompound, children: values)
+  else:
+    typedFail(nkeUnsupportedType, "unsupported typed NIF value: " & name(T), path)
+
+proc toNif*[T](value: T; limits = defaultCodecLimits()): string =
+  validLimits(limits)
+  let root = compound(DataRootTag, nodeAtom("1"), encodeValue(value, limits, "$"))
+  root.render(result, limits, "$")
+
+proc toBif*[T](value: T; limits = defaultCodecLimits()): string =
+  nifToBif(toNif(value, limits), limits)
+
+proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
+                    path: string): T
+
+proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
+                    path: string): T =
+  when T is bool:
+    if node.kind != dkAtom or node.text notin ["true", "false"]:
+      typedFail(nkeTypeMismatch, "expected bool", path, node.offset)
+    result = node.text == "true"
+  elif T is SomeUnsignedInt:
+    if node.kind != dkAtom or node.text.len < 2 or node.text[^1] != 'u':
+      typedFail(nkeTypeMismatch, "expected unsigned integer", path, node.offset)
+    try: result = T(parseBiggestUInt(node.text[0 .. ^2]))
+    except ValueError: typedFail(nkeTypeMismatch, "invalid unsigned integer", path, node.offset)
+  elif T is SomeSignedInt:
+    if node.kind != dkAtom or node.text.endsWith("u"):
+      typedFail(nkeTypeMismatch, "expected signed integer", path, node.offset)
+    try: result = T(parseBiggestInt(node.text))
+    except ValueError: typedFail(nkeTypeMismatch, "invalid signed integer", path, node.offset)
+  elif T is SomeFloat:
+    if node.kind != dkAtom:
+      typedFail(nkeTypeMismatch, "expected float", path, node.offset)
+    try:
+      result = T(parseFloat(node.text))
+      if classify(result) in {fcNan, fcInf, fcNegInf}:
+        typedFail(nkeNonFiniteFloat, "non-finite float is unsupported", path, node.offset)
+    except ValueError: typedFail(nkeTypeMismatch, "invalid float", path, node.offset)
+  elif T is string:
+    if node.kind != dkString: typedFail(nkeTypeMismatch, "expected string", path, node.offset)
+    if node.text.len > limits.maxStringBytes: typedFail(nkeStringLimit, "string exceeds configured limit", path, node.offset)
+    result = node.text
+  elif T is char:
+    if node.kind != dkChar: typedFail(nkeTypeMismatch, "expected char", path, node.offset)
+    result = node.text[0]
+  elif T is enum:
+    let values = require(node, "enum", path)
+    if values.len != 3 or values[1].kind != dkString or values[2].kind != dkString:
+      typedFail(nkeTypeMismatch, "invalid enum", path, node.offset)
+    if options.requireTypeNames and values[1].text != name(T):
+      typedFail(nkeTypeMismatch, "enum type name mismatch", path, values[1].offset)
+    for item in T:
+      if $item == values[2].text: return item
+    typedFail(nkeUnknownEnumMember, "unknown enum member", path, values[2].offset)
+  elif T is Option:
+    if node.kind == dkAtom and node.text == "none": return none(typeof(default(T).get))
+    let values = require(node, "some", path)
+    if values.len != 2: typedFail(nkeTypeMismatch, "invalid Option", path, node.offset)
+    result = some(decodeValue[typeof(default(T).get)](values[1], limits, options, path))
+  elif T is seq:
+    let values = require(node, "seq", path)
+    if values.len - 1 > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path, node.offset)
+    type Elem = typeof(default(T)[0])
+    result = newSeqOfCap[Elem](values.len - 1)
+    for i in 1 ..< values.len: result.add decodeValue[Elem](values[i], limits, options, path & "[" & $(i - 1) & "]")
+  elif T is array:
+    let values = require(node, "array", path)
+    if values.len - 1 != result.len: typedFail(nkeArrayLengthMismatch, "array length mismatch", path, node.offset)
+    for i in 0 ..< result.len:
+      result[i] = decodeValue[typeof(result[i])](values[i + 1], limits, options, path & "[" & $i & "]")
+  elif T is tuple:
+    let values = require(node, "tuple", path)
+    var index = 1
+    for fieldName, field in fieldPairs(result):
+      if index >= values.len: typedFail(nkeArrayLengthMismatch, "tuple length mismatch", path, node.offset)
+      field = decodeValue[typeof(field)](values[index], limits, options, path & "." & fieldName)
+      inc index
+    if index != values.len: typedFail(nkeArrayLengthMismatch, "tuple length mismatch", path, node.offset)
+  elif T is object:
+    let values = require(node, "object", path)
+    if values.len < 2 or values[1].kind != dkString: typedFail(nkeTypeMismatch, "invalid object", path, node.offset)
+    if options.requireTypeNames and values[1].text != name(T):
+      typedFail(nkeTypeMismatch, "object type name mismatch", path, values[1].offset)
+    if values.len - 2 > limits.maxObjectFields: typedFail(nkeTokenLimit, "object exceeds configured field limit", path, node.offset)
+    var consumed = newSeq[bool](values.len)
+    for fieldName, field in fieldPairs(result):
+      var match = -1
+      for i in 2 ..< values.len:
+        let entry = values[i]
+        if entry.kind != dkCompound or entry.children.len != 3 or entry.children[0].kind != dkAtom or
+            entry.children[0].text != "field" or entry.children[1].kind != dkString:
+          typedFail(nkeTypeMismatch, "invalid object field", path, entry.offset)
+        if entry.children[1].text == fieldName:
+          if match >= 0: typedFail(nkeUnknownField, "duplicate object field", path & "." & fieldName, entry.offset)
+          match = i
+      if match < 0: typedFail(nkeMissingField, "missing object field", path & "." & fieldName, node.offset)
+      consumed[match] = true
+      field = decodeValue[typeof(field)](values[match].children[2], limits, options, path & "." & fieldName)
+    if not options.allowUnknownFields:
+      for i in 2 ..< values.len:
+        if not consumed[i]: typedFail(nkeUnknownField, "unknown object field", path & "." & values[i].children[1].text, values[i].offset)
+  else:
+    typedFail(nkeUnsupportedType, "unsupported typed NIF value: " & name(T), path, node.offset)
+
+proc fromNif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
+                 options = defaultTypedCodecOptions()): T =
+  validLimits(limits)
+  discard nifToBif(source, limits) # validate syntax and all generic codec limits first
+  var pos = 0
+  let root = parseNode(source, pos, limits, 0)
+  skipSpace(source, pos)
+  if pos != source.len: typedFail(nkeMalformedInput, "trailing typed NIF data", "$", pos)
+  let values = require(root, DataRootTag, "$")
+  if values.len != 3 or values[1].kind != dkAtom or values[1].text != "1":
+    typedFail(nkeUnsupportedDataProfile, "unsupported NIFKit data profile", "$", root.offset)
+  result = decodeValue[T](values[2], limits, options, "$")
+
+proc fromBif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
+                 options = defaultTypedCodecOptions()): T =
+  fromNif(bifToNif(source, limits), T, limits, options)
