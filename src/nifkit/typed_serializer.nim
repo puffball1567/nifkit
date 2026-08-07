@@ -1,6 +1,6 @@
 ## Typed NIF data profile v1.  This module is intentionally Nim-only.
 
-import std/[options, strutils, typetraits, math, tables, sets, algorithm]
+import std/[options, strutils, typetraits, math, tables, sets, algorithm, unicode]
 import ./[codec_limits, nif_encoder, bif_decoder]
 
 const DataRootTag = "nifkit\\2Ddata"
@@ -34,6 +34,8 @@ proc require(node: DataNode; tag, path: string): seq[DataNode] =
 proc quote(value: string; limits: CodecLimits; path: string): string =
   if value.len > limits.maxStringBytes:
     typedFail(nkeStringLimit, "string exceeds configured limit", path)
+  if validateUtf8(value) >= 0:
+    typedFail(nkeInvalidUtf8, "string is not valid UTF-8", path)
   result = "\""
   for c in value:
     let b = ord(c)
@@ -159,7 +161,9 @@ proc encodeSet[T](value: T; limits: CodecLimits; path: string): DataNode =
   DataNode(kind: dkCompound, children: values)
 
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
-  when T is distinct:
+  when T is cstring:
+    typedFail(nkeUnsupportedType, "cstring is unsupported by the typed data profile", path)
+  elif T is distinct:
     type Base = distinctBase(T)
     compound("distinct", nodeString(name(T)), encodeValue(Base(value), limits, path))
   elif T is bool:
@@ -291,12 +295,20 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
   elif T is SomeUnsignedInt:
     if node.kind != dkAtom or node.text.len < 2 or node.text[^1] != 'u':
       typedFail(nkeTypeMismatch, "expected unsigned integer", path, node.offset)
-    try: result = T(parseBiggestUInt(node.text[0 .. ^2]))
+    try:
+      let parsed = parseBiggestUInt(node.text[0 .. ^2])
+      if parsed > BiggestUInt(high(T)):
+        typedFail(nkeTypeMismatch, "unsigned integer is outside the target type range", path, node.offset)
+      result = T(parsed)
     except ValueError: typedFail(nkeTypeMismatch, "invalid unsigned integer", path, node.offset)
   elif T is SomeSignedInt:
     if node.kind != dkAtom or node.text.endsWith("u"):
       typedFail(nkeTypeMismatch, "expected signed integer", path, node.offset)
-    try: result = T(parseBiggestInt(node.text))
+    try:
+      let parsed = parseBiggestInt(node.text)
+      if parsed < BiggestInt(low(T)) or parsed > BiggestInt(high(T)):
+        typedFail(nkeTypeMismatch, "signed integer is outside the target type range", path, node.offset)
+      result = T(parsed)
     except ValueError: typedFail(nkeTypeMismatch, "invalid signed integer", path, node.offset)
   elif T is SomeFloat:
     if node.kind != dkAtom:
@@ -309,6 +321,7 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
   elif T is string:
     if node.kind != dkString: typedFail(nkeTypeMismatch, "expected string", path, node.offset)
     if node.text.len > limits.maxStringBytes: typedFail(nkeStringLimit, "string exceeds configured limit", path, node.offset)
+    if validateUtf8(node.text) >= 0: typedFail(nkeInvalidUtf8, "string is not valid UTF-8", path, node.offset)
     result = node.text
   elif T is char:
     if node.kind != dkChar: typedFail(nkeTypeMismatch, "expected char", path, node.offset)

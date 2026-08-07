@@ -59,6 +59,34 @@ suite "typed serializer v1":
     expect NifKitError:
       discard fromNif("(nifkit\\2Ddata 1 (distinct \"OtherId\" 42u))", UserId)
 
+  test "rejects out-of-range integers before narrowing":
+    check fromNif("(nifkit\\2Ddata 1 127)", int8) == 127'i8
+    check fromNif("(nifkit\\2Ddata 1 255u)", uint8) == 255'u8
+    for source in ["(nifkit\\2Ddata 1 128)", "(nifkit\\2Ddata 1 -129)"]:
+      expect NifKitError:
+        discard fromNif(source, int8)
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 256u)", uint8)
+
+  test "rejects invalid UTF-8 strings and cstring":
+    let invalid = "\xFF"
+    try:
+      discard toNif(invalid)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeInvalidUtf8
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 \"\\FF\")", string)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeInvalidUtf8
+    let unsupported: cstring = "nifkit"
+    try:
+      discard toNif(unsupported)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeUnsupportedType
+
   test "normalizes Table and OrderedTable entries by key representation":
     var first, second: Table[string, int]
     first["z"] = 1

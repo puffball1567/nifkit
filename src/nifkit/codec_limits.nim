@@ -20,6 +20,7 @@ type
     nkeUnsupportedDataProfile,
     nkeCyclicReference,
     nkeNonFiniteFloat
+    nkeInvalidUtf8
 
   ## Kept as the public compatibility base exception.
   BifError* = object of ValueError
