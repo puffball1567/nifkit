@@ -12,6 +12,8 @@ type
     items: seq[int]
   RefRecord = ref object
     name: string
+  Cycle = ref object
+    next {.cursor.}: Cycle
 
 suite "typed serializer v1":
   test "round-trips a nested data profile value":
@@ -37,3 +39,12 @@ suite "typed serializer v1":
     let decoded = fromNif(toNif(value), RefRecord)
     check not decoded.isNil
     check decoded.name == "child"
+
+  test "rejects cyclic ref objects":
+    let value = Cycle()
+    value.next = value
+    try:
+      discard toNif(value)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeCyclicReference
