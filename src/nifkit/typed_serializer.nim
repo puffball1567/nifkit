@@ -1,6 +1,6 @@
 ## Typed NIF data profile v1.  This module is intentionally Nim-only.
 
-import std/[options, strutils, typetraits, math, tables, sets, algorithm, unicode]
+import std/[options, strutils, typetraits, math, tables, sets, algorithm, unicode, macros]
 import ./[codec_limits, nif_encoder, bif_decoder]
 
 const DataRootTag = "nifkit\\2Ddata"
@@ -18,6 +18,24 @@ type
     offset: int
 
 var activeReferences {.threadvar.}: seq[pointer]
+
+proc containsRecCase(node: NimNode): bool {.compileTime.} =
+  if node.kind == nnkRecCase:
+    return true
+  for child in node:
+    if containsRecCase(child):
+      return true
+
+macro isVariantObject(T: typedesc): untyped =
+  var impl = T.getTypeImpl
+  if impl.kind == nnkBracketExpr and impl[0].eqIdent("typeDesc"):
+    impl = impl[1].getTypeImpl
+  while impl.kind in {nnkSym, nnkTypeDef}:
+    if impl.kind == nnkSym:
+      impl = impl.getImpl
+    else:
+      impl = impl[2]
+  newLit(containsRecCase(impl))
 
 proc defaultTypedCodecOptions*(): TypedCodecOptions =
   TypedCodecOptions(requireTypeNames: true)
@@ -219,13 +237,16 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
       defer: activeReferences.setLen(activeReferences.len - 1)
       compound("ref", encodeValue(value[], limits, path))
   elif T is object:
-    var values = @[nodeAtom("object"), nodeString(name(T))]
-    var count = 0
-    for fieldName, fieldValue in fieldPairs(value):
-      inc count
-      if count > limits.maxObjectFields: typedFail(nkeTokenLimit, "object exceeds configured field limit", path)
-      values.add compound("field", nodeString(fieldName), encodeValue(fieldValue, limits, path & "." & fieldName))
-    DataNode(kind: dkCompound, children: values)
+    when isVariantObject(T):
+      typedFail(nkeUnsupportedType, "variant object support is not available yet", path)
+    else:
+      var values = @[nodeAtom("object"), nodeString(name(T))]
+      var count = 0
+      for fieldName, fieldValue in fieldPairs(value):
+        inc count
+        if count > limits.maxObjectFields: typedFail(nkeTokenLimit, "object exceeds configured field limit", path)
+        values.add compound("field", nodeString(fieldName), encodeValue(fieldValue, limits, path & "." & fieldName))
+      DataNode(kind: dkCompound, children: values)
   else:
     typedFail(nkeUnsupportedType, "unsupported typed NIF value: " & name(T), path)
 
@@ -391,28 +412,31 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
     new(result)
     result[] = decodeValue[typeof(result[])](values[1], limits, options, path)
   elif T is object:
-    let values = require(node, "object", path)
-    if values.len < 2 or values[1].kind != dkString: typedFail(nkeTypeMismatch, "invalid object", path, node.offset)
-    if options.requireTypeNames and values[1].text != name(T):
-      typedFail(nkeTypeMismatch, "object type name mismatch", path, values[1].offset)
-    if values.len - 2 > limits.maxObjectFields: typedFail(nkeTokenLimit, "object exceeds configured field limit", path, node.offset)
-    var consumed = newSeq[bool](values.len)
-    for fieldName, field in fieldPairs(result):
-      var match = -1
-      for i in 2 ..< values.len:
-        let entry = values[i]
-        if entry.kind != dkCompound or entry.children.len != 3 or entry.children[0].kind != dkAtom or
-            entry.children[0].text != "field" or entry.children[1].kind != dkString:
-          typedFail(nkeTypeMismatch, "invalid object field", path, entry.offset)
-        if entry.children[1].text == fieldName:
-          if match >= 0: typedFail(nkeUnknownField, "duplicate object field", path & "." & fieldName, entry.offset)
-          match = i
-      if match < 0: typedFail(nkeMissingField, "missing object field", path & "." & fieldName, node.offset)
-      consumed[match] = true
-      field = decodeValue[typeof(field)](values[match].children[2], limits, options, path & "." & fieldName)
-    if not options.allowUnknownFields:
-      for i in 2 ..< values.len:
-        if not consumed[i]: typedFail(nkeUnknownField, "unknown object field", path & "." & values[i].children[1].text, values[i].offset)
+    when isVariantObject(T):
+      typedFail(nkeUnsupportedType, "variant object support is not available yet", path, node.offset)
+    else:
+      let values = require(node, "object", path)
+      if values.len < 2 or values[1].kind != dkString: typedFail(nkeTypeMismatch, "invalid object", path, node.offset)
+      if options.requireTypeNames and values[1].text != name(T):
+        typedFail(nkeTypeMismatch, "object type name mismatch", path, values[1].offset)
+      if values.len - 2 > limits.maxObjectFields: typedFail(nkeTokenLimit, "object exceeds configured field limit", path, node.offset)
+      var consumed = newSeq[bool](values.len)
+      for fieldName, field in fieldPairs(result):
+        var match = -1
+        for i in 2 ..< values.len:
+          let entry = values[i]
+          if entry.kind != dkCompound or entry.children.len != 3 or entry.children[0].kind != dkAtom or
+              entry.children[0].text != "field" or entry.children[1].kind != dkString:
+            typedFail(nkeTypeMismatch, "invalid object field", path, entry.offset)
+          if entry.children[1].text == fieldName:
+            if match >= 0: typedFail(nkeUnknownField, "duplicate object field", path & "." & fieldName, entry.offset)
+            match = i
+        if match < 0: typedFail(nkeMissingField, "missing object field", path & "." & fieldName, node.offset)
+        consumed[match] = true
+        field = decodeValue[typeof(field)](values[match].children[2], limits, options, path & "." & fieldName)
+      if not options.allowUnknownFields:
+        for i in 2 ..< values.len:
+          if not consumed[i]: typedFail(nkeUnknownField, "unknown object field", path & "." & values[i].children[1].text, values[i].offset)
   else:
     typedFail(nkeUnsupportedType, "unsupported typed NIF value: " & name(T), path, node.offset)
 

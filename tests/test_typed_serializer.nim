@@ -15,6 +15,14 @@ type
   Cycle = ref object
     next {.cursor.}: Cycle
   UserId = distinct uint64
+  VariantKind = enum vkText, vkCount
+  VariantRecord = object
+    id: string
+    case kind: VariantKind
+    of vkText:
+      text: string
+    of vkCount:
+      count: int
 
 suite "typed serializer v1":
   test "round-trips a nested data profile value":
@@ -86,6 +94,16 @@ suite "typed serializer v1":
       fail()
     except NifKitError as error:
       check error.kind == nkeUnsupportedType
+
+  test "rejects every active branch of a variant object without a case transition":
+    let textValue = VariantRecord(id: "a", kind: vkText, text: "hello")
+    let countValue = VariantRecord(id: "b", kind: vkCount, count: 12)
+    for value in [textValue, countValue]:
+      try:
+        discard toNif(value)
+        fail()
+      except NifKitError as error:
+        check error.kind == nkeUnsupportedType
 
   test "normalizes Table and OrderedTable entries by key representation":
     var first, second: Table[string, int]
