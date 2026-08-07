@@ -1,6 +1,6 @@
 ## Typed NIF data profile v1.  This module is intentionally Nim-only.
 
-import std/[options, strutils, typetraits, math, tables, algorithm]
+import std/[options, strutils, typetraits, math, tables, sets, algorithm]
 import ./[codec_limits, nif_encoder, bif_decoder]
 
 const DataRootTag = "nifkit\\2Ddata"
@@ -143,6 +143,21 @@ proc encodeTable[T](value: T; limits: CodecLimits; path: string): DataNode =
     values.add entry[1]
   DataNode(kind: dkCompound, children: values)
 
+proc encodeSet[T](value: T; limits: CodecLimits; path: string): DataNode =
+  var entries: seq[(string, DataNode)]
+  if value.len > limits.maxContainerItems:
+    typedFail(nkeTokenLimit, "set exceeds configured limit", path)
+  for item in value:
+    let itemNode = encodeValue(item, limits, path & ".<item>")
+    var itemText = ""
+    itemNode.render(itemText, limits, path & ".<item>")
+    entries.add (itemText, itemNode)
+  entries.sort(proc(a, b: (string, DataNode)): int = cmp(a[0], b[0]))
+  var values = @[nodeAtom("set")]
+  for entry in entries:
+    values.add entry[1]
+  DataNode(kind: dkCompound, children: values)
+
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
   when T is distinct:
     type Base = distinctBase(T)
@@ -169,6 +184,10 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
     encodeTable(value, limits, path)
   elif T is OrderedTable:
     encodeTable(value, limits, path)
+  elif T is HashSet:
+    encodeSet(value, limits, path)
+  elif T is OrderedSet:
+    encodeSet(value, limits, path)
   elif T is seq:
     var values = @[nodeAtom("seq")]
     if value.len > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path)
@@ -241,6 +260,20 @@ proc decodeOrderedTableEntry[K, V](target: var OrderedTable[K, V]; entry: DataNo
     typedFail(nkeTypeMismatch, "duplicate table key", path, entry.offset)
   target[key] = decodeValue[V](entry.children[2], limits, options, path & "[key]")
 
+proc decodeSetItem[E](target: var HashSet[E]; node: DataNode;
+                      limits: CodecLimits; options: TypedCodecOptions; path: string) =
+  let item = decodeValue[E](node, limits, options, path)
+  if item in target:
+    typedFail(nkeTypeMismatch, "duplicate set item", path, node.offset)
+  target.incl item
+
+proc decodeOrderedSetItem[E](target: var OrderedSet[E]; node: DataNode;
+                             limits: CodecLimits; options: TypedCodecOptions; path: string) =
+  let item = decodeValue[E](node, limits, options, path)
+  if item in target:
+    typedFail(nkeTypeMismatch, "duplicate set item", path, node.offset)
+  target.incl item
+
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
                     path: string): T =
   when T is distinct:
@@ -306,6 +339,18 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
       typedFail(nkeTokenLimit, "table exceeds configured limit", path, node.offset)
     for i in 1 ..< values.len:
       decodeOrderedTableEntry(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+  elif T is HashSet:
+    let values = require(node, "set", path)
+    if values.len - 1 > limits.maxContainerItems:
+      typedFail(nkeTokenLimit, "set exceeds configured limit", path, node.offset)
+    for i in 1 ..< values.len:
+      decodeSetItem(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+  elif T is OrderedSet:
+    let values = require(node, "set", path)
+    if values.len - 1 > limits.maxContainerItems:
+      typedFail(nkeTokenLimit, "set exceeds configured limit", path, node.offset)
+    for i in 1 ..< values.len:
+      decodeOrderedSetItem(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
   elif T is seq:
     let values = require(node, "seq", path)
     if values.len - 1 > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path, node.offset)

@@ -10,6 +10,8 @@
 - Add canonical `Table` and `OrderedTable` typed serialization with duplicate
   key rejection and container limits.
 - Add canonical `distinct T` typed serialization with strict type-name checks.
+- Add canonical `HashSet` and `OrderedSet` typed serialization with duplicate
+  item rejection and container limits.
 
 ## 0.2.0 - 2026-08-01
 

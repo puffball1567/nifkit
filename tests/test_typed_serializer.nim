@@ -1,4 +1,4 @@
-import std/[unittest, options, strutils, tables]
+import std/[unittest, options, strutils, tables, sets]
 import ../src/nifkit
 
 type
@@ -76,6 +76,28 @@ suite "typed serializer v1":
     check decodedOrdered["a"] == 2
     check decodedOrdered["z"] == 1
     check toNif(decodedOrdered) == toNif(ordered)
+
+  test "normalizes HashSet and OrderedSet members":
+    let first = ["z", "a"].toHashSet
+    let second = ["a", "z"].toHashSet
+    check toNif(first) == toNif(second)
+    check fromNif(toNif(first), HashSet[string]) == first
+    check fromBif(toBif(first), HashSet[string]) == first
+
+    var ordered: OrderedSet[string]
+    ordered.incl "z"
+    ordered.incl "a"
+    let decodedOrdered = fromNif(toNif(ordered), OrderedSet[string])
+    check "a" in decodedOrdered
+    check "z" in decodedOrdered
+    check toNif(decodedOrdered) == toNif(ordered)
+
+  test "rejects duplicate set members and enforces set limits":
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 (set \"a\" \"a\"))", HashSet[string])
+    let value = ["a"].toHashSet
+    expect NifKitError:
+      discard toNif(value, CodecLimits(maxContainerItems: 0))
 
   test "rejects duplicate table keys and enforces table limits":
     expect NifKitError:
