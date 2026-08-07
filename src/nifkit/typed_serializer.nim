@@ -144,7 +144,10 @@ proc encodeTable[T](value: T; limits: CodecLimits; path: string): DataNode =
   DataNode(kind: dkCompound, children: values)
 
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
-  when T is bool:
+  when T is distinct:
+    type Base = distinctBase(T)
+    compound("distinct", nodeString(name(T)), encodeValue(Base(value), limits, path))
+  elif T is bool:
     nodeAtom(if value: "true" else: "false")
   elif T is SomeUnsignedInt:
     nodeAtom($value & "u")
@@ -240,7 +243,15 @@ proc decodeOrderedTableEntry[K, V](target: var OrderedTable[K, V]; entry: DataNo
 
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
                     path: string): T =
-  when T is bool:
+  when T is distinct:
+    let values = require(node, "distinct", path)
+    if values.len != 3 or values[1].kind != dkString:
+      typedFail(nkeTypeMismatch, "invalid distinct value", path, node.offset)
+    if options.requireTypeNames and values[1].text != name(T):
+      typedFail(nkeTypeMismatch, "distinct type name mismatch", path, values[1].offset)
+    type Base = distinctBase(T)
+    result = T(decodeValue[Base](values[2], limits, options, path))
+  elif T is bool:
     if node.kind != dkAtom or node.text notin ["true", "false"]:
       typedFail(nkeTypeMismatch, "expected bool", path, node.offset)
     result = node.text == "true"

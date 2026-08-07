@@ -9,6 +9,7 @@
   and bounded NIF/BIF round trips.
 - Add canonical `Table` and `OrderedTable` typed serialization with duplicate
   key rejection and container limits.
+- Add canonical `distinct T` typed serialization with strict type-name checks.
 
 ## 0.2.0 - 2026-08-01
 
