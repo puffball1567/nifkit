@@ -13,6 +13,8 @@
 - Add canonical `HashSet` and `OrderedSet` typed serialization with duplicate
   item rejection and container limits.
 - Reject typed integer narrowing overflow, invalid UTF-8 strings, and `cstring`.
+- Reject variant objects with `nkeUnsupportedType` rather than risking a Nim
+  case-object branch-transition failure.
 
 ## 0.2.0 - 2026-08-01
 
