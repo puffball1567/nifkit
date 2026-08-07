@@ -14,6 +14,7 @@ type
     name: string
   Cycle = ref object
     next {.cursor.}: Cycle
+  UserId = distinct uint64
 
 suite "typed serializer v1":
   test "round-trips a nested data profile value":
@@ -48,6 +49,15 @@ suite "typed serializer v1":
       fail()
     except NifKitError as error:
       check error.kind == nkeCyclicReference
+
+  test "round-trips distinct values with their declared type name":
+    let value = UserId(42)
+    let nif = toNif(value)
+    check nif == "(nifkit\\2Ddata 1 (distinct \"UserId\" 42u))"
+    check uint64(fromNif(nif, UserId)) == uint64(value)
+    check uint64(fromBif(toBif(value), UserId)) == uint64(value)
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 (distinct \"OtherId\" 42u))", UserId)
 
   test "normalizes Table and OrderedTable entries by key representation":
     var first, second: Table[string, int]
