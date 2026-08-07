@@ -7,7 +7,8 @@ this profile.
 
 ## Status and API
 
-This is a design, not an implementation commitment. Its eventual API is:
+The profile is being implemented incrementally for the v0.3.0 release. Its
+public API is:
 
 ```nim
 proc toNif*[T](value: T): string
@@ -41,13 +42,17 @@ declaration order, and `Table` entries sorted by their canonical encoded key.
 | object | `(object "TypeName" (field "name" value)...)` |
 | variant object | object form plus `(case "discriminant" value)` |
 | `ref object` | `nil` or `(ref object-value)`; cycles are rejected |
-| `Table[K,V]` | `(table (entry key value)...)` |
+| `Table[K,V]`, `OrderedTable[K,V]` | `(table (entry key value)...)` |
 | `distinct T` | `(distinct "TypeName" value)` |
 | `nil` | `nil` |
 
 Field names are strings, not NIF identifiers, so Nim identifiers that require
 escaping remain lossless. Tuples are positional and objects are named; the two
 are never inferred from each other.
+
+Both table kinds are written with entries sorted by the canonical encoded key.
+`OrderedTable` therefore preserves key/value pairs but is decoded in canonical
+key order rather than its original insertion order.
 
 ## Compatibility rules
 
