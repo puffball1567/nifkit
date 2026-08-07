@@ -1,4 +1,4 @@
-import std/[unittest, options, strutils]
+import std/[unittest, options, strutils, tables]
 import ../src/nifkit
 
 type
@@ -48,3 +48,29 @@ suite "typed serializer v1":
       fail()
     except NifKitError as error:
       check error.kind == nkeCyclicReference
+
+  test "normalizes Table and OrderedTable entries by key representation":
+    var first, second: Table[string, int]
+    first["z"] = 1
+    first["a"] = 2
+    second["a"] = 2
+    second["z"] = 1
+    check toNif(first) == toNif(second)
+    check fromNif(toNif(first), Table[string, int]) == first
+    check fromBif(toBif(first), Table[string, int]) == first
+
+    var ordered: OrderedTable[string, int]
+    ordered["z"] = 1
+    ordered["a"] = 2
+    let decodedOrdered = fromNif(toNif(ordered), OrderedTable[string, int])
+    check decodedOrdered["a"] == 2
+    check decodedOrdered["z"] == 1
+    check toNif(decodedOrdered) == toNif(ordered)
+
+  test "rejects duplicate table keys and enforces table limits":
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 (table (entry \"a\" 1) (entry \"a\" 2)))", Table[string, int])
+    var value: Table[string, int]
+    value["a"] = 1
+    expect NifKitError:
+      discard toNif(value, CodecLimits(maxContainerItems: 0))

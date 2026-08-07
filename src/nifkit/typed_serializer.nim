@@ -1,6 +1,6 @@
 ## Typed NIF data profile v1.  This module is intentionally Nim-only.
 
-import std/[options, strutils, typetraits, math]
+import std/[options, strutils, typetraits, math, tables, algorithm]
 import ./[codec_limits, nif_encoder, bif_decoder]
 
 const DataRootTag = "nifkit\\2Ddata"
@@ -127,6 +127,22 @@ proc compound(tag: string; values: varargs[DataNode]): DataNode =
 
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode
 
+proc encodeTable[T](value: T; limits: CodecLimits; path: string): DataNode =
+  var entries: seq[(string, DataNode)]
+  if value.len > limits.maxContainerItems:
+    typedFail(nkeTokenLimit, "table exceeds configured limit", path)
+  for key, item in value.pairs:
+    let keyNode = encodeValue(key, limits, path & ".<key>")
+    var keyText = ""
+    keyNode.render(keyText, limits, path & ".<key>")
+    entries.add (keyText, compound("entry", keyNode,
+      encodeValue(item, limits, path & "[" & keyText & "]")))
+  entries.sort(proc(a, b: (string, DataNode)): int = cmp(a[0], b[0]))
+  var values = @[nodeAtom("table")]
+  for entry in entries:
+    values.add entry[1]
+  DataNode(kind: dkCompound, children: values)
+
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
   when T is bool:
     nodeAtom(if value: "true" else: "false")
@@ -146,6 +162,10 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
     compound("enum", nodeString(name(T)), nodeString($value))
   elif T is Option:
     if value.isSome: compound("some", encodeValue(value.get, limits, path)) else: nodeAtom("none")
+  elif T is Table:
+    encodeTable(value, limits, path)
+  elif T is OrderedTable:
+    encodeTable(value, limits, path)
   elif T is seq:
     var values = @[nodeAtom("seq")]
     if value.len > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path)
@@ -196,6 +216,28 @@ proc toBif*[T](value: T; limits = defaultCodecLimits()): string =
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
                     path: string): T
 
+proc decodeTableEntry[K, V](target: var Table[K, V]; entry: DataNode;
+                            limits: CodecLimits; options: TypedCodecOptions;
+                            path: string) =
+  if entry.kind != dkCompound or entry.children.len != 3 or
+      entry.children[0].kind != dkAtom or entry.children[0].text != "entry":
+    typedFail(nkeTypeMismatch, "invalid table entry", path, entry.offset)
+  let key = decodeValue[K](entry.children[1], limits, options, path & ".<key>")
+  if target.hasKey(key):
+    typedFail(nkeTypeMismatch, "duplicate table key", path, entry.offset)
+  target[key] = decodeValue[V](entry.children[2], limits, options, path & "[key]")
+
+proc decodeOrderedTableEntry[K, V](target: var OrderedTable[K, V]; entry: DataNode;
+                                   limits: CodecLimits; options: TypedCodecOptions;
+                                   path: string) =
+  if entry.kind != dkCompound or entry.children.len != 3 or
+      entry.children[0].kind != dkAtom or entry.children[0].text != "entry":
+    typedFail(nkeTypeMismatch, "invalid table entry", path, entry.offset)
+  let key = decodeValue[K](entry.children[1], limits, options, path & ".<key>")
+  if target.hasKey(key):
+    typedFail(nkeTypeMismatch, "duplicate table key", path, entry.offset)
+  target[key] = decodeValue[V](entry.children[2], limits, options, path & "[key]")
+
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
                     path: string): T =
   when T is bool:
@@ -241,6 +283,18 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
     let values = require(node, "some", path)
     if values.len != 2: typedFail(nkeTypeMismatch, "invalid Option", path, node.offset)
     result = some(decodeValue[typeof(default(T).get)](values[1], limits, options, path))
+  elif T is Table:
+    let values = require(node, "table", path)
+    if values.len - 1 > limits.maxContainerItems:
+      typedFail(nkeTokenLimit, "table exceeds configured limit", path, node.offset)
+    for i in 1 ..< values.len:
+      decodeTableEntry(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+  elif T is OrderedTable:
+    let values = require(node, "table", path)
+    if values.len - 1 > limits.maxContainerItems:
+      typedFail(nkeTokenLimit, "table exceeds configured limit", path, node.offset)
+    for i in 1 ..< values.len:
+      decodeOrderedTableEntry(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
   elif T is seq:
     let values = require(node, "seq", path)
     if values.len - 1 > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path, node.offset)

@@ -7,6 +7,8 @@
   ports.
 - Add the initial Nim-only typed serializer v1 API with strict object decoding
   and bounded NIF/BIF round trips.
+- Add canonical `Table` and `OrderedTable` typed serialization with duplicate
+  key rejection and container limits.
 
 ## 0.2.0 - 2026-08-01
 
