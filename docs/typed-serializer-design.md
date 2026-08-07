@@ -43,6 +43,7 @@ declaration order, and `Table` entries sorted by their canonical encoded key.
 | variant object | object form plus `(case "discriminant" value)` |
 | `ref object` | `nil` or `(ref object-value)`; cycles are rejected |
 | `Table[K,V]`, `OrderedTable[K,V]` | `(table (entry key value)...)` |
+| `HashSet[T]`, `OrderedSet[T]` | `(set value...)` |
 | `distinct T` | `(distinct "TypeName" value)` |
 | `nil` | `nil` |
 
@@ -53,6 +54,8 @@ are never inferred from each other.
 Both table kinds are written with entries sorted by the canonical encoded key.
 `OrderedTable` therefore preserves key/value pairs but is decoded in canonical
 key order rather than its original insertion order.
+Sets follow the same canonical member ordering; `OrderedSet` is decoded in that
+canonical order rather than its original insertion order.
 
 ## Compatibility rules
 
