@@ -386,15 +386,11 @@ proc globalIndex(e: Encoder): seq[tuple[symbolId: uint64, tokenPos: uint64, visi
         result.add (id, uint64(pos), visibility)
     pos = value.next
 
-proc encodeNifToBif(nifText: string; limits: CodecLimits): string =
+proc encodeBifDocument*(document: BifDocument; limits = defaultCodecLimits()): string =
   validLimits(limits)
-  if nifText.len > limits.maxInputBytes:
-    raiseCodecError(nkeInputTooLarge, "NIF input exceeds configured limit")
-  var e = Encoder(input: nifText, limits: limits)
-  e.skipSpace()
-  while e.pos < e.input.len:
-    e.parseNode(LineInfo())
-    e.skipSpace()
+  if document.tokens.len > limits.maxTokens:
+    raiseCodecError(nkeTokenLimit, "BIF token count exceeds configured limit")
+  var e = Encoder(doc: document)
   let headerSize = 16 + 5
   let pad = (4 - (headerSize and 3)) and 3
   var pools = ""
@@ -421,6 +417,17 @@ proc encodeNifToBif(nifText: string; limits: CodecLimits): string =
     result.addVarint(entry.symbolId)
     result.addVarint(entry.tokenPos)
     result.addVarint(entry.visibility)
+
+proc encodeNifToBif(nifText: string; limits: CodecLimits): string =
+  validLimits(limits)
+  if nifText.len > limits.maxInputBytes:
+    raiseCodecError(nkeInputTooLarge, "NIF input exceeds configured limit")
+  var e = Encoder(input: nifText, limits: limits)
+  e.skipSpace()
+  while e.pos < e.input.len:
+    e.parseNode(LineInfo())
+    e.skipSpace()
+  encodeBifDocument(e.doc, limits)
 
 proc nifToBif*(nifText: string; limits = defaultCodecLimits()): string =
   try:
