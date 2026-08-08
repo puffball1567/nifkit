@@ -27,6 +27,12 @@ type
     children: seq[DataNode]
     offset: int
 
+  TypedBifBuilder = object
+    document: BifDocument
+    tagIds: Table[string, int]
+    stringIds: Table[string, int]
+    poolBytes: int
+
 var activeReferences {.threadvar.}: seq[pointer]
 
 proc containsRecCase(node: NimNode): bool {.compileTime.} =
@@ -239,6 +245,92 @@ proc nodeString(value: string): DataNode = DataNode(kind: dkString, text: value)
 proc compound(tag: string; values: varargs[DataNode]): DataNode =
   DataNode(kind: dkCompound, children: @[nodeAtom(tag)] & @values)
 
+proc addTypedToken(builder: var TypedBifBuilder; token: uint32; limits: CodecLimits) =
+  if builder.document.tokens.len >= limits.maxTokens:
+    typedFail(nkeTokenLimit, "typed BIF token count exceeds configured limit", "$")
+  builder.document.tokens.add token
+
+proc emitTyped(builder: var TypedBifBuilder; kind: uint32; value: uint64; limits: CodecLimits) =
+  builder.addTypedToken((uint32(value and 0x0fffffff'u64) shl 4) or kind, limits)
+  var rest = value shr 28
+  while rest > 0:
+    builder.addTypedToken((uint32(rest and 0x0fffffff'u64) shl 4) or BifKindExtended, limits)
+    rest = rest shr 28
+
+proc typedPoolId(builder: var TypedBifBuilder; value: string; limits: CodecLimits): int =
+  if value in builder.stringIds: return builder.stringIds[value]
+  if value.len > limits.maxStringBytes:
+    typedFail(nkeStringLimit, "typed BIF string exceeds configured limit", "$")
+  if builder.document.strings.len >= limits.maxPoolEntries or
+      value.len > limits.maxPoolBytes - builder.poolBytes:
+    typedFail(nkePoolLimit, "typed BIF pools exceed configured limit", "$")
+  result = builder.document.strings.len + 1
+  builder.document.strings.add value
+  builder.stringIds[value] = result
+  builder.poolBytes += value.len
+
+proc typedTagId(builder: var TypedBifBuilder; value: string; limits: CodecLimits): int =
+  if value in builder.tagIds: return builder.tagIds[value]
+  if value.len > limits.maxStringBytes or builder.document.tags.len >= limits.maxPoolEntries or
+      value.len > limits.maxPoolBytes - builder.poolBytes:
+    typedFail(nkePoolLimit, "typed BIF tag pool exceeds configured limit", "$")
+  result = builder.document.tags.len + 1
+  if result > 511: typedFail(nkePoolLimit, "typed BIF has too many tags", "$")
+  builder.document.tags.add value
+  builder.tagIds[value] = result
+  builder.poolBytes += value.len
+
+proc emitTypedText(builder: var TypedBifBuilder; kind: uint32; value: string; limits: CodecLimits) =
+  if value.len <= 3:
+    var packed = 1'u64 or (uint64(value.len) shl 1)
+    for i, c in value: packed = packed or (uint64(ord(c)) shl (3 + i * 8))
+    builder.emitTyped(kind, packed, limits)
+  else:
+    builder.emitTyped(kind, uint64(builder.typedPoolId(value, limits)) shl 1, limits)
+
+proc emitTypedNode(builder: var TypedBifBuilder; node: DataNode; limits: CodecLimits; depth: int) =
+  if depth > limits.maxNestingDepth:
+    typedFail(nkeNestingTooDeep, "typed BIF nesting exceeds limit", "$")
+  case node.kind
+  of dkString:
+    if validateUtf8(node.text) >= 0: typedFail(nkeInvalidUtf8, "string is not valid UTF-8", "$")
+    builder.emitTypedText(BifKindString, node.text, limits)
+  of dkChar:
+    if node.text.len != 1: typedFail(nkeTypeMismatch, "character must contain one byte", "$")
+    builder.emitTyped(BifKindChar, uint64(ord(node.text[0])), limits)
+  of dkAtom:
+    if node.text.endsWith("u"):
+      try: builder.emitTyped(BifKindUInt, parseBiggestUInt(node.text[0 .. ^2]), limits)
+      except ValueError: typedFail(nkeTypeMismatch, "invalid unsigned integer", "$")
+    elif node.text.contains('.') or node.text.contains('e') or node.text.contains('E'):
+      try:
+        builder.emitTyped(BifKindFloat, cast[uint64](parseFloat(node.text)), limits)
+      except ValueError:
+        builder.emitTypedText(BifKindIdent, node.text, limits)
+    else:
+      try:
+        let value = parseBiggestInt(node.text)
+        let bits = if value >= -(1'i64 shl 27) and value < (1'i64 shl 27): 28
+          elif value >= -(1'i64 shl 55) and value < (1'i64 shl 55): 56 else: 84
+        let encoded = if bits == 84: uint64(value) else: uint64(value) and ((1'u64 shl bits) - 1)
+        builder.emitTyped(BifKindInt, encoded, limits)
+      except ValueError:
+        builder.emitTypedText(BifKindIdent, node.text, limits)
+  of dkCompound:
+    if node.children.len == 0 or node.children[0].kind != dkAtom:
+      typedFail(nkeTypeMismatch, "invalid typed compound", "$")
+    let tag = if node.children[0].text == DataRootTag: DataRootName else: node.children[0].text
+    let head = builder.document.tokens.len
+    builder.emitTyped(BifKindTag, uint64(builder.typedTagId(tag, limits)), limits)
+    let bodyStart = builder.document.tokens.len
+    for i in 1 ..< node.children.len:
+      builder.emitTypedNode(node.children[i], limits, depth + 1)
+    let jump = builder.document.tokens.len - bodyStart
+    if jump > 524287:
+      typedFail(nkeTokenLimit, "typed BIF tag body exceeds supported jump", "$")
+    let tagId = builder.document.tokens[head] shr 4
+    builder.document.tokens[head] = (uint32(uint64(tagId) or (uint64(jump) shl 9)) shl 4) or BifKindTag
+
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode
 
 proc encodeTable[T](value: T; limits: CodecLimits; path: string): DataNode =
@@ -352,7 +444,14 @@ proc toNif*[T](value: T; limits = defaultCodecLimits()): string =
   root.render(result, limits, "$")
 
 proc toBif*[T](value: T; limits = defaultCodecLimits()): string =
-  nifToBif(toNif(value, limits), limits)
+  validLimits(limits)
+  if activeReferences.len != 0:
+    activeReferences.setLen(0)
+  var builder: TypedBifBuilder
+  builder.emitTypedNode(compound(DataRootTag, nodeAtom("1"), encodeValue(value, limits, "$")), limits, 0)
+  result = encodeBifDocument(builder.document, limits)
+  if result.len > limits.maxOutputBytes:
+    typedFail(nkeOutputTooLarge, "typed BIF output exceeds configured limit", "$")
 
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
                     path: string): T
