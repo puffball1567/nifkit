@@ -20,6 +20,10 @@ proc fromBif*[T](source: string; _: typedesc[T]): T
 All decoding APIs will accept `CodecLimits`; no typed decoder may bypass the
 bounded NIF/BIF codec.
 
+`fromBif` reads the validated BIF token stream directly and does not construct
+an intermediate NIF text string. `toBif` remains functionally equivalent to
+`nifToBif(toNif(value))` while direct BIF construction is completed.
+
 ## Canonical profile
 
 The root is `(nifkit\2Ddata 1 value)`. The escaped hyphen is required by NIF
