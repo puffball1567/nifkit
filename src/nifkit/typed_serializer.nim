@@ -3,7 +3,17 @@
 import std/[options, strutils, typetraits, math, tables, sets, algorithm, unicode, macros]
 import ./[codec_limits, nif_encoder, bif_decoder]
 
-const DataRootTag = "nifkit\\2Ddata"
+const
+  DataRootTag = "nifkit\\2Ddata"
+  DataRootName = "nifkit-data"
+  BifKindChar = 1'u32
+  BifKindString = 2'u32
+  BifKindInt = 3'u32
+  BifKindUInt = 4'u32
+  BifKindFloat = 5'u32
+  BifKindIdent = 8'u32
+  BifKindTag = 9'u32
+  BifKindExtended = 10'u32
 
 type
   TypedCodecOptions* = object
@@ -45,7 +55,9 @@ proc typedFail(kind: NifKitErrorKind; message, path: string; offset = -1) {.nore
 
 proc require(node: DataNode; tag, path: string): seq[DataNode] =
   if node.kind != dkCompound or node.children.len == 0 or
-      node.children[0].kind != dkAtom or node.children[0].text != tag:
+      node.children[0].kind != dkAtom or
+      (node.children[0].text != tag and
+        not (tag == DataRootTag and node.children[0].text == DataRootName)):
     typedFail(nkeTypeMismatch, "expected " & tag, path, node.offset)
   result = node.children
 
@@ -139,6 +151,88 @@ proc parseNode(source: string; pos: var int; limits: CodecLimits; depth: int): D
     while pos < source.len and source[pos] notin {' ', '\t', '\r', '\n', '(', ')'}: inc pos
     if start == pos: typedFail(nkeMalformedInput, "expected atom", "$", pos)
     result.text = source[start ..< pos]
+
+proc bifKind(token: uint32): uint32 {.inline.} = token and 0x0f'u32
+
+proc bifWidePayload(document: BifDocument; pos: int): tuple[value: uint64, next: int] =
+  if pos >= document.tokens.len:
+    typedFail(nkeMalformedInput, "invalid BIF token position", "$")
+  result.value = uint64(document.tokens[pos] shr 4)
+  result.next = pos + 1
+  var shift = 28
+  while result.next < document.tokens.len and bifKind(document.tokens[result.next]) == BifKindExtended:
+    if shift >= 64:
+      typedFail(nkeMalformedInput, "BIF value exceeds supported width", "$")
+    result.value = result.value or (uint64(document.tokens[result.next] shr 4) shl shift)
+    shift += 28
+    inc result.next
+
+proc bifString(document: BifDocument; value: uint64; offset: int): string =
+  if (value and 1) == 1:
+    let count = int((value shr 1) and 3)
+    for i in 0 ..< count:
+      result.add char((value shr (3 + i * 8)) and 0xff)
+  else:
+    let id = int(value shr 1)
+    if id <= 0 or id > document.strings.len:
+      typedFail(nkeMalformedInput, "invalid BIF string pool id", "$", offset)
+    result = document.strings[id - 1]
+
+proc parseBifNode(document: BifDocument; pos: var int; limit, depth: int;
+                  limits: CodecLimits): DataNode =
+  if depth > limits.maxNestingDepth:
+    typedFail(nkeNestingTooDeep, "typed BIF nesting exceeds limit", "$", pos)
+  if pos >= limit:
+    typedFail(nkeMalformedInput, "BIF node exceeds parent boundary", "$", pos)
+  result = DataNode(offset: pos)
+  let tokenPos = pos
+  let tokenKind = bifKind(document.tokens[pos])
+  let wide = bifWidePayload(document, pos)
+  pos = wide.next
+  case tokenKind
+  of BifKindChar:
+    if wide.value > 0xff:
+      typedFail(nkeMalformedInput, "invalid BIF character", "$", tokenPos)
+    result.kind = dkChar
+    result.text = $char(wide.value)
+  of BifKindString:
+    result.kind = dkString
+    result.text = bifString(document, wide.value, tokenPos)
+  of BifKindIdent:
+    result.kind = dkAtom
+    result.text = bifString(document, wide.value, tokenPos)
+  of BifKindInt:
+    result.kind = dkAtom
+    let bits = min(64, 28 * (wide.next - tokenPos))
+    let signed = if bits == 64: cast[int64](wide.value) else:
+      let sign = 1'u64 shl (bits - 1)
+      if (wide.value and sign) == 0: int64(wide.value)
+      else: int64(wide.value) - (1'i64 shl bits)
+    result.text = $signed
+  of BifKindUInt:
+    result.kind = dkAtom
+    result.text = $wide.value & "u"
+  of BifKindFloat:
+    result.kind = dkAtom
+    result.text = $cast[float64](wide.value)
+  of BifKindTag:
+    let tagId = int(wide.value and 0x1ff)
+    let jump64 = wide.value shr 9
+    if tagId <= 0 or tagId > document.tags.len or jump64 > uint64(high(int)):
+      typedFail(nkeMalformedInput, "invalid BIF tag", "$", tokenPos)
+    let bodyEnd = pos + int(jump64)
+    if bodyEnd > limit or bodyEnd > document.tokens.len:
+      typedFail(nkeMalformedInput, "invalid BIF tag jump", "$", tokenPos)
+    result.kind = dkCompound
+    result.children.add DataNode(kind: dkAtom, text: document.tags[tagId - 1])
+    while pos < bodyEnd:
+      if result.children.len >= limits.maxContainerItems:
+        typedFail(nkeTokenLimit, "container exceeds configured limit", "$", pos)
+      result.children.add parseBifNode(document, pos, bodyEnd, depth + 1, limits)
+    if pos != bodyEnd:
+      typedFail(nkeMalformedInput, "invalid BIF tag body", "$", tokenPos)
+  else:
+    typedFail(nkeMalformedInput, "unsupported BIF token in typed data", "$", tokenPos)
 
 proc nodeAtom(value: string): DataNode = DataNode(kind: dkAtom, text: value)
 proc nodeString(value: string): DataNode = DataNode(kind: dkString, text: value)
@@ -455,4 +549,13 @@ proc fromNif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
 
 proc fromBif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
                  options = defaultTypedCodecOptions()): T =
-  fromNif(bifToNif(source, limits), T, limits, options)
+  validLimits(limits)
+  let document = parseBif(source, limits)
+  var pos = 0
+  let root = parseBifNode(document, pos, document.tokens.len, 0, limits)
+  if pos != document.tokens.len:
+    typedFail(nkeMalformedInput, "trailing typed BIF data", "$", pos)
+  let values = require(root, DataRootTag, "$")
+  if values.len != 3 or values[1].kind != dkAtom or values[1].text != "1":
+    typedFail(nkeUnsupportedDataProfile, "unsupported NIFKit data profile", "$", root.offset)
+  result = decodeValue[T](values[2], limits, options, "$")

@@ -15,6 +15,8 @@
 - Reject typed integer narrowing overflow, invalid UTF-8 strings, and `cstring`.
 - Reject variant objects with `nkeUnsupportedType` rather than risking a Nim
   case-object branch-transition failure.
+- Decode typed BIF values directly from validated BIF tokens without an
+  intermediate NIF text allocation.
 
 ## 0.2.0 - 2026-08-01
 
