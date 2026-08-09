@@ -24,6 +24,8 @@ type
       text: string
     of vkCount:
       count: int
+  RefChain = ref object
+    child: RefChain
 
 suite "typed serializer v1":
   test "round-trips a nested data profile value":
@@ -162,3 +164,45 @@ suite "typed serializer v1":
     value["a"] = 1
     expect NifKitError:
       discard toNif(value, CodecLimits(maxContainerItems: 0))
+
+  test "enforces typed container and object field limits at boundaries":
+    let values = @[1, 2]
+    var containerLimit = defaultCodecLimits()
+    containerLimit.maxContainerItems = 2
+    check fromNif(toNif(values, containerLimit), seq[int]) == values
+    containerLimit.maxContainerItems = 1
+    expect NifKitError:
+      discard toNif(values, containerLimit)
+
+    let value = Record(title: "x", count: 1, enabled: true, state: stOpen,
+      note: none(string), items: @[])
+    var objectLimit = defaultCodecLimits()
+    objectLimit.maxObjectFields = 6
+    check fromNif(toNif(value, objectLimit), Record) == value
+    objectLimit.maxObjectFields = 5
+    expect NifKitError:
+      discard toNif(value, objectLimit)
+
+  test "enforces typed string, output, and reference tracking limits":
+    var stringLimit = defaultCodecLimits()
+    stringLimit.maxStringBytes = 3
+    check fromNif(toNif("abc", stringLimit), string) == "abc"
+    expect NifKitError:
+      discard toNif("abcd", stringLimit)
+    var outputLimit = defaultCodecLimits()
+    outputLimit.maxOutputBytes = 3
+    expect NifKitError:
+      discard toNif("abc", outputLimit)
+
+    let chain = RefChain(child: RefChain())
+    var referenceLimit = defaultCodecLimits()
+    referenceLimit.maxTrackedReferences = 1
+    expect NifKitError:
+      discard toNif(chain, referenceLimit)
+
+  test "typed failures do not poison later BIF conversions":
+    expect NifKitError:
+      discard fromBif("not a BIF", Record)
+    let value = Record(title: "ok", count: 1, enabled: false, state: stClosed,
+      note: some("done"), items: @[2])
+    check fromBif(toBif(value), Record).title == "ok"
