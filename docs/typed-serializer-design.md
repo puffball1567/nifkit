@@ -49,6 +49,7 @@ declaration order, and `Table` entries sorted by their canonical encoded key.
 | `Table[K,V]`, `OrderedTable[K,V]` | `(table (entry key value)...)` |
 | `HashSet[T]`, `OrderedSet[T]` | `(set value...)` |
 | `distinct T` | `(distinct "TypeName" value)` |
+| `range[A..B]` | underlying ordinal representation, constrained to `A..B` on decode |
 | `nil` | `nil` |
 
 Field names are strings, not NIF identifiers, so Nim identifiers that require

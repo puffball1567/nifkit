@@ -17,6 +17,7 @@
   case-object branch-transition failure.
 - Decode typed BIF values directly from validated BIF tokens without an
   intermediate NIF text allocation.
+- Add typed `Range` support with explicit boundary validation on decode.
 
 ## 0.2.0 - 2026-08-01
 
