@@ -370,6 +370,9 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
   elif T is distinct:
     type Base = distinctBase(T)
     compound("distinct", nodeString(name(T)), encodeValue(Base(value), limits, path))
+  elif T is range:
+    type Base = typeof(low(T) + 0)
+    encodeValue(Base(value), limits, path)
   elif T is bool:
     nodeAtom(if value: "true" else: "false")
   elif T is SomeUnsignedInt:
@@ -502,6 +505,12 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
       typedFail(nkeTypeMismatch, "distinct type name mismatch", path, values[1].offset)
     type Base = distinctBase(T)
     result = T(decodeValue[Base](values[2], limits, options, path))
+  elif T is range:
+    type Base = typeof(low(T) + 0)
+    let value = decodeValue[Base](node, limits, options, path)
+    if value < low(T) or value > high(T):
+      typedFail(nkeTypeMismatch, "value is outside the target range", path, node.offset)
+    result = T(value)
   elif T is bool:
     if node.kind != dkAtom or node.text notin ["true", "false"]:
       typedFail(nkeTypeMismatch, "expected bool", path, node.offset)

@@ -15,6 +15,7 @@ type
   Cycle = ref object
     next {.cursor.}: Cycle
   UserId = distinct uint64
+  SmallCount = range[3..7]
   VariantKind = enum vkText, vkCount
   VariantRecord = object
     id: string
@@ -66,6 +67,15 @@ suite "typed serializer v1":
     check uint64(fromBif(toBif(value), UserId)) == uint64(value)
     expect NifKitError:
       discard fromNif("(nifkit\\2Ddata 1 (distinct \"OtherId\" 42u))", UserId)
+
+  test "round-trips ranges and rejects values outside their bounds":
+    let value: SmallCount = 5
+    check fromNif(toNif(value), SmallCount) == value
+    check fromBif(toBif(value), SmallCount) == value
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 2)", SmallCount)
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 8)", SmallCount)
 
   test "rejects out-of-range integers before narrowing":
     check fromNif("(nifkit\\2Ddata 1 127)", int8) == 127'i8
