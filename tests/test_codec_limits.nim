@@ -59,6 +59,21 @@ suite "codec limits and structured errors":
     expectKind(nkeOutputTooLarge):
       discard nifToBif("x", limits)
 
+  test "BIF headers remain valid when pool counts use multi-byte varints":
+    var source = ""
+    for i in 0 ..< 241:
+      if source.len > 0: source.add ' '
+      source.add "\"value" & $i & "\""
+    let encoded = nifToBif(source)
+    validateBif(encoded)
+    check nifToBif(bifToNif(encoded)) == encoded
+    var limits = defaultCodecLimits()
+    limits.maxOutputBytes = encoded.len
+    check nifToBif(source, limits) == encoded
+    limits.maxOutputBytes = encoded.len - 1
+    expectKind(nkeOutputTooLarge):
+      discard nifToBif(source, limits)
+
   test "BIF output is bounded while rendering":
     let bif = nifToBif("\"abcdef\"")
     var limits = defaultCodecLimits()
