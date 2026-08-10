@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-08-10
 
 - Clarify that the C ABI is a C/C++ compatibility interface, while new
   integrations in other languages should be language-native implementations or
@@ -20,6 +20,7 @@
 - Add typed `Range` support with explicit boundary validation on decode.
 - Build BIF output incrementally within `maxOutputBytes` and correctly account
   for multi-byte BIF header varints.
+- Add strict typed error paths and malformed/truncation recovery coverage.
 
 ## 0.2.0 - 2026-08-01
 

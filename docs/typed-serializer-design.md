@@ -1,28 +1,31 @@
 # Typed serializer design
 
-This document defines the proposed general data-exchange profile for a future
-typed NIF serializer. It is deliberately separate from compiler NIF ASTs:
+This document defines the general data-exchange profile implemented by the
+typed NIF serializer in NIFKit v0.3. It is deliberately separate from compiler NIF ASTs:
 compiler-specific tags, line information, and symbol indexes are not part of
 this profile.
 
 ## Status and API
 
-The profile is being implemented incrementally for the v0.3.0 release. Its
-public API is:
+The profile is implemented in the v0.3.0 release. Its public API is:
 
 ```nim
-proc toNif*[T](value: T): string
-proc fromNif*[T](source: string; _: typedesc[T]): T
-proc toBif*[T](value: T): string
-proc fromBif*[T](source: string; _: typedesc[T]): T
+proc toNif*[T](value: T; limits = defaultCodecLimits()): string
+proc fromNif*[T](source: string; _: typedesc[T];
+                 limits = defaultCodecLimits();
+                 options = defaultTypedCodecOptions()): T
+proc toBif*[T](value: T; limits = defaultCodecLimits()): string
+proc fromBif*[T](source: string; _: typedesc[T];
+                 limits = defaultCodecLimits();
+                 options = defaultTypedCodecOptions()): T
 ```
 
-All decoding APIs will accept `CodecLimits`; no typed decoder may bypass the
-bounded NIF/BIF codec.
+All encoding and decoding APIs accept `CodecLimits`; no typed conversion may
+bypass the bounded NIF/BIF codec.
 
 `fromBif` reads the validated BIF token stream directly and does not construct
-an intermediate NIF text string. `toBif` remains functionally equivalent to
-`nifToBif(toNif(value))` while direct BIF construction is completed.
+an intermediate NIF text string. `toBif` constructs BIF directly while
+preserving the same canonical profile representation as `toNif`.
 
 ## Canonical profile
 
@@ -64,12 +67,14 @@ canonical order rather than its original insertion order.
 
 ## Compatibility rules
 
-Decoders reject unknown fields by default. An opt-in pragma may permit unknown
-fields for forward compatibility. Missing object fields use a declared default
-only when one exists; otherwise they are an error. Enum decoding uses member
+Decoders reject unknown fields by default; set
+`TypedCodecOptions.allowUnknownFields` to permit them for forward compatibility.
+Missing object fields are errors in profile v1. Enum decoding uses member
 names, never ordinal values, to avoid silently changing meaning when source
-order changes. Schema changes require a new root version or an explicitly
-declared migration.
+order changes. Type names are required by default; set
+`TypedCodecOptions.requireTypeNames` to `false` only for an explicitly managed
+compatibility boundary. Schema changes require a new root version or an
+explicitly declared migration.
 
 `Option.none`, `nil`, and an absent object field are distinct states. A
 non-`ref` value cannot decode from `nil`. Reference identity and cycles are out
@@ -77,6 +82,10 @@ of scope for profile version 1; ref values are tree-shaped.
 
 ## Error model
 
-Syntax and resource failures propagate `NifKitError`. Typed shape/type failures
-will add a separate structured error kind with a NIF byte offset and a logical
-field path. Callers must never parse error message text.
+All failures propagate `NifKitError`. `kind` distinguishes syntax/resource
+errors from typed failures including `nkeTypeMismatch`, `nkeUnknownField`,
+`nkeMissingField`, `nkeUnknownEnumMember`, `nkeArrayLengthMismatch`,
+`nkeUnsupportedType`, `nkeUnsupportedDataProfile`, `nkeCyclicReference`, and
+`nkeNonFiniteFloat`. `offset` identifies the input location where applicable;
+`path` identifies the logical value path such as `$.items[3].price`. Callers
+must never parse error message text.

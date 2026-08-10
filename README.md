@@ -109,9 +109,30 @@ let boundedNif = bifToNif(bif, limits)
 ```
 
 `NifKitError.kind` distinguishes malformed input, unsupported versions, and
-each resource limit without requiring callers to parse messages. See
-[the typed serializer design](docs/typed-serializer-design.md) for the planned
-general data-exchange profile.
+each resource limit without requiring callers to parse messages.
+
+### Typed serializer (v0.3)
+
+NIFKit can encode and decode supported Nim values using the typed data profile
+v1. The BIF APIs construct and read BIF directly, so application code need not
+allocate intermediate NIF text.
+
+```nim
+type CreateRecord = object
+  title: string
+  count: int
+  enabled: bool
+
+let request = CreateRecord(title: "NIF", count: 12, enabled: true)
+let payload = toBif(request)
+let decoded = fromBif(payload, CreateRecord)
+doAssert decoded == request
+```
+
+`toNif`, `fromNif`, `toBif`, and `fromBif` accept `CodecLimits`; decoding also
+accepts `TypedCodecOptions`. Unknown object fields and type-name mismatches are
+rejected by default. See [the typed serializer design](docs/typed-serializer-design.md)
+for the profile, supported types, canonicalization, and compatibility rules.
 
 Nim applications should call the Nim API directly. Applications may store BIF
 however they want; semantic interpretation belongs to the embedding application
