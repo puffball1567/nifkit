@@ -83,7 +83,7 @@ jobs:
           nimcache/test_${{ matrix.mm }}_asan
 
   windows-asan:
-    name: Windows ${{ matrix.mm }} MSVC ASan
+    name: Windows ${{ matrix.mm }} Clang ASan
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -96,13 +96,8 @@ jobs:
       - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: '2.2.0'
-      - name: Set up the MSVC developer environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: Run repeated managed-memory paths under MSVC AddressSanitizer
+      - name: Run repeated managed-memory paths under Clang AddressSanitizer
         shell: pwsh
         run: |
-          nim c --cc:vcc --mm:${{ matrix.mm }} -d:useMalloc --stackTrace:on --debuginfo --lineDir:on --passC:/fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
-          Copy-Item "$env:VCToolsInstallDir\bin\Hostx64\x64\clang_rt.asan*.dll" -Destination nimcache
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:useMalloc --stackTrace:on --debuginfo --lineDir:on --passC:-fsanitize=address --passL:-fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
           & "nimcache/test_${{ matrix.mm }}_windows_asan.exe"
