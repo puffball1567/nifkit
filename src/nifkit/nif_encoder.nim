@@ -333,24 +333,19 @@ proc parseNode(e: var Encoder; parent: LineInfo) =
       e.emitText(KindIdent, atom)
     discard e.attachSuffix(parent)
 
-proc addLe64(dest: var string; value: uint64) =
-  for shift in countup(0, 56, 8): dest.add char((value shr shift) and 0xff)
+proc addLe64(dest: var string; value: uint64; limits: CodecLimits) =
+  for shift in countup(0, 56, 8): dest.boundedAdd(char((value shr shift) and 0xff), limits)
 
-proc addLe32(dest: var string; value: uint32) =
-  for shift in countup(0, 24, 8): dest.add char((value shr shift) and 0xff)
+proc addLe32(dest: var string; value: uint32; limits: CodecLimits) =
+  for shift in countup(0, 24, 8): dest.boundedAdd(char((value shr shift) and 0xff), limits)
 
-proc addVarint(dest: var string; value: uint64) =
+proc varintLen(value: uint64): int =
   if value <= 240:
-    dest.add char(value)
+    1
   elif value <= 2287:
-    let n = value - 240
-    dest.add char(241 + (n div 256))
-    dest.add char(n mod 256)
+    2
   elif value <= 67823:
-    let n = value - 2288
-    dest.add char(249)
-    dest.add char(n shr 8)
-    dest.add char(n and 0xff)
+    3
   else:
     var bytes = 0
     var n = value
@@ -359,9 +354,30 @@ proc addVarint(dest: var string; value: uint64) =
       n = n shr 8
     if bytes < 3: bytes = 3
     if bytes > 8: fail("BIF varint exceeds uint64")
-    dest.add char(247 + bytes)
+    bytes + 1
+
+proc addVarint(dest: var string; value: uint64; limits: CodecLimits) =
+  if value <= 240:
+    dest.boundedAdd(char(value), limits)
+  elif value <= 2287:
+    let n = value - 240
+    dest.boundedAdd(char(241 + (n div 256)), limits)
+    dest.boundedAdd(char(n mod 256), limits)
+  elif value <= 67823:
+    let n = value - 2288
+    dest.boundedAdd(char(249), limits)
+    dest.boundedAdd(char(n shr 8), limits)
+    dest.boundedAdd(char(n and 0xff), limits)
+  else:
+    let bytes = varintLen(value) - 1
+    dest.boundedAdd(char(247 + bytes), limits)
     for shift in countdown((bytes - 1) * 8, 0, 8):
-      dest.add char((value shr shift) and 0xff)
+      dest.boundedAdd(char((value shr shift) and 0xff), limits)
+
+proc addOutputSize(total: var int; amount: int; limits: CodecLimits) =
+  if amount < 0 or total > limits.maxOutputBytes - amount:
+    raiseCodecError(nkeOutputTooLarge, "BIF output exceeds configured limit")
+  total += amount
 
 proc tokenValue(tokens: seq[uint32]; pos: int): tuple[value: uint64, next: int] =
   result.value = uint64(tokens[pos] shr 4)
@@ -391,32 +407,47 @@ proc encodeBifDocument*(document: BifDocument; limits = defaultCodecLimits()): s
   if document.tokens.len > limits.maxTokens:
     raiseCodecError(nkeTokenLimit, "BIF token count exceeds configured limit")
   var e = Encoder(doc: document)
-  let headerSize = 16 + 5
+  var headerSize = 16
+  for count in [e.doc.tokens.len, e.doc.tags.len, e.doc.strings.len, e.doc.syms.len, e.doc.filenames.len]:
+    headerSize.addOutputSize(varintLen(uint64(count)), limits)
   let pad = (4 - (headerSize and 3)) and 3
-  var pools = ""
+  var totalSize = headerSize
+  totalSize.addOutputSize(pad, limits)
+  if e.doc.tokens.len > limits.maxOutputBytes div 4:
+    raiseCodecError(nkeOutputTooLarge, "BIF output exceeds configured limit")
+  totalSize.addOutputSize(e.doc.tokens.len * 4, limits)
   for pool in [e.doc.tags, e.doc.strings, e.doc.syms, e.doc.filenames]:
     for value in pool:
-      pools.addVarint(uint64(value.len))
-      pools.add value
-  let indexOffset = headerSize + pad + e.doc.tokens.len * 4 + pools.len
+      totalSize.addOutputSize(varintLen(uint64(value.len)), limits)
+      totalSize.addOutputSize(value.len, limits)
+  let indexOffset = totalSize
   let index = e.globalIndex()
   if index.len > limits.maxIndexEntries:
     raiseCodecError(nkeIndexLimit, "NIF index count exceeds configured limit")
-  result = "NIFBIN\0\5"
-  result.addLe64(uint64(indexOffset))
-  result.addVarint(uint64(e.doc.tokens.len))
-  result.addVarint(uint64(e.doc.tags.len))
-  result.addVarint(uint64(e.doc.strings.len))
-  result.addVarint(uint64(e.doc.syms.len))
-  result.addVarint(uint64(e.doc.filenames.len))
-  for _ in 0 ..< pad: result.add '\0'
-  for token in e.doc.tokens: result.addLe32(token)
-  result.add pools
-  result.addVarint(uint64(index.len))
+  totalSize.addOutputSize(varintLen(uint64(index.len)), limits)
   for entry in index:
-    result.addVarint(entry.symbolId)
-    result.addVarint(entry.tokenPos)
-    result.addVarint(entry.visibility)
+    totalSize.addOutputSize(varintLen(entry.symbolId), limits)
+    totalSize.addOutputSize(varintLen(entry.tokenPos), limits)
+    totalSize.addOutputSize(varintLen(entry.visibility), limits)
+  result = newStringOfCap(totalSize)
+  result.boundedAdd("NIFBIN\0\5", limits)
+  result.addLe64(uint64(indexOffset), limits)
+  result.addVarint(uint64(e.doc.tokens.len), limits)
+  result.addVarint(uint64(e.doc.tags.len), limits)
+  result.addVarint(uint64(e.doc.strings.len), limits)
+  result.addVarint(uint64(e.doc.syms.len), limits)
+  result.addVarint(uint64(e.doc.filenames.len), limits)
+  for _ in 0 ..< pad: result.boundedAdd('\0', limits)
+  for token in e.doc.tokens: result.addLe32(token, limits)
+  for pool in [e.doc.tags, e.doc.strings, e.doc.syms, e.doc.filenames]:
+    for value in pool:
+      result.addVarint(uint64(value.len), limits)
+      result.boundedAdd(value, limits)
+  result.addVarint(uint64(index.len), limits)
+  for entry in index:
+    result.addVarint(entry.symbolId, limits)
+    result.addVarint(entry.tokenPos, limits)
+    result.addVarint(entry.visibility, limits)
 
 proc encodeNifToBif(nifText: string; limits: CodecLimits): string =
   validLimits(limits)

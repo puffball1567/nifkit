@@ -18,6 +18,8 @@
 - Decode typed BIF values directly from validated BIF tokens without an
   intermediate NIF text allocation.
 - Add typed `Range` support with explicit boundary validation on decode.
+- Build BIF output incrementally within `maxOutputBytes` and correctly account
+  for multi-byte BIF header varints.
 
 ## 0.2.0 - 2026-08-01
 
