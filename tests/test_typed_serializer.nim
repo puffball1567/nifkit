@@ -297,3 +297,36 @@ suite "typed serializer v1":
     let value = Record(title: "ok", count: 1, enabled: false, state: stClosed,
       note: some("done"), items: @[2])
     check fromBif(toBif(value), Record).title == "ok"
+
+  test "typed NIF and BIF truncation return structured errors":
+    let value = Record(title: "truncation", count: 7, enabled: true,
+      state: stOpen, note: some("value"), items: @[1, 2])
+    let nif = toNif(value)
+    for length in 0 ..< nif.len:
+      try:
+        discard fromNif(nif[0 ..< length], Record)
+        checkpoint "truncated typed NIF was accepted at " & $length
+        fail()
+      except NifKitError:
+        discard
+    let bif = toBif(value)
+    for length in 0 ..< bif.len:
+      try:
+        discard fromBif(bif[0 ..< length], Record)
+        checkpoint "truncated typed BIF was accepted at " & $length
+        fail()
+      except NifKitError:
+        discard
+    check fromBif(toBif(value), Record) == value
+
+  test "typed BIF rejects malformed token content without poisoning conversion":
+    let value = Record(title: "valid", count: 1, enabled: true, state: stClosed,
+      note: none(string), items: @[])
+    var malformed = toBif(value)
+    malformed[^1] = char(0xff)
+    try:
+      discard fromBif(malformed, Record)
+      fail()
+    except NifKitError:
+      discard
+    check fromNif(toNif(value), Record) == value
