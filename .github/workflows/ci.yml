@@ -151,11 +151,14 @@ jobs:
           & "nimcache/test_${{ matrix.mm }}_windows_ubsan.exe"
 
   lsan:
-    name: ${{ matrix.mm }} LSan
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} ${{ matrix.mm }} LSan
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
         mm:
           - arc
           - orc
