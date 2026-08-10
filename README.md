@@ -111,6 +111,36 @@ let boundedNif = bifToNif(bif, limits)
 `NifKitError.kind` distinguishes malformed input, unsupported versions, and
 each resource limit without requiring callers to parse messages.
 
+### Choosing limits at an application boundary
+
+`defaultCodecLimits()` is finite and safe as a general default, but it is not
+a deployment policy. The application that accepts a network payload knows its
+own request budget, expected document shape, and concurrency, so it should
+create fixed limits for each trust boundary and pass them to every conversion
+and validation call. Do not derive limits from peer-controlled data or leave a
+network-facing boundary unbounded.
+
+```nim
+const ApiBodyLimit = 1 * 1024 * 1024
+
+proc apiCodecLimits(): CodecLimits =
+  result = defaultCodecLimits()
+  result.maxInputBytes = ApiBodyLimit
+  result.maxOutputBytes = ApiBodyLimit
+  result.maxNestingDepth = 64
+  result.maxTokens = 100_000
+  result.maxContainerItems = 10_000
+
+let nif = bifToNif(receivedBif, apiCodecLimits())
+```
+
+Use separate fixed policies when the workloads differ—for example, a small
+public API request, a larger authenticated import, and a local trusted tool.
+Keep the transport's request/response byte cap no larger than the relevant
+NIFKit input or output budget, and tighten pool, string, and container limits
+when the data model permits it. `CodecLimits` is the enforcement mechanism;
+choosing these values remains the embedding application's responsibility.
+
 ### Typed serializer (v0.3)
 
 NIFKit can encode and decode supported Nim values using the typed data profile
