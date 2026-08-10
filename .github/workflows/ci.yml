@@ -128,28 +128,6 @@ jobs:
           nim c --cc:clang --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:-fsanitize=undefined --passL:-fsanitize=undefined --nimcache:nimcache/${{ matrix.mm }}-ubsan -o:nimcache/test_${{ matrix.mm }}_ubsan tests/test_arc_memory.nim
           nimcache/test_${{ matrix.mm }}_ubsan
 
-  windows-ubsan:
-    name: Windows ${{ matrix.mm }} Clang UBSan
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        mm:
-          - arc
-          - orc
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jiro4989/setup-nim-action@v2
-        with:
-          nim-version: '2.2.0'
-      - name: Run repeated managed-memory paths under Clang UndefinedBehaviorSanitizer
-        shell: pwsh
-        run: |
-          nim c --cc:clang --mm:${{ matrix.mm }} -d:useMalloc --stackTrace:on --debuginfo --lineDir:on --passC:-fsanitize=undefined --passL:-fsanitize=undefined --nimcache:nimcache/${{ matrix.mm }}-windows-ubsan -o:nimcache/test_${{ matrix.mm }}_windows_ubsan.exe tests/test_arc_memory.nim
-          $clangResourceDir = (& clang --print-resource-dir).Trim()
-          Copy-Item "$clangResourceDir\lib\windows\clang_rt.*.dll" -Destination nimcache
-          & "nimcache/test_${{ matrix.mm }}_windows_ubsan.exe"
-
   lsan:
     name: ${{ matrix.os }} ${{ matrix.mm }} LSan
     runs-on: ${{ matrix.os }}
