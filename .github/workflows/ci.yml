@@ -37,9 +37,15 @@ jobs:
       - name: Verify
         run: nimble verify -y
 
-  arc-valgrind:
-    name: ARC Valgrind
+  valgrind:
+    name: ${{ matrix.mm }} Valgrind
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mm:
+          - arc
+          - orc
     steps:
       - uses: actions/checkout@v4
       - uses: jiro4989/setup-nim-action@v2
@@ -47,7 +53,7 @@ jobs:
           nim-version: '2.2.0'
       - name: Install Valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
-      - name: Run repeated ARC paths
+      - name: Run repeated managed-memory paths
         run: |
-          nim c --mm:arc -d:release --nimcache:nimcache/arc-memory -o:nimcache/test_arc_memory tests/test_arc_memory.nim
-          valgrind --leak-check=full --errors-for-leak-kinds=all --error-exitcode=1 nimcache/test_arc_memory
+          nim c --mm:${{ matrix.mm }} -d:release --nimcache:nimcache/${{ matrix.mm }}-memory -o:nimcache/test_${{ matrix.mm }}_memory tests/test_arc_memory.nim
+          valgrind --leak-check=full --errors-for-leak-kinds=all --error-exitcode=1 nimcache/test_${{ matrix.mm }}_memory
