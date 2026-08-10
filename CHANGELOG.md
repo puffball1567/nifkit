@@ -4,7 +4,8 @@
 
 - Add Linux/macOS Clang and Windows MSVC AddressSanitizer coverage for both
   ARC and ORC repeated codec and typed-serializer paths.
-
+- Document how embedding applications should choose fixed `CodecLimits` at
+  each untrusted-data boundary.
 ## 0.3.0 - 2026-08-10
 
 - Clarify that the C ABI is a C/C++ compatibility interface, while new

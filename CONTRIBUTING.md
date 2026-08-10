@@ -22,6 +22,9 @@ For language integration policy, see
   repository's `devel` or `hotfix/*` branches.
 - Use `hotfix/*` only for urgent corrections to a released version. Cut it
   from `main`, then merge or cherry-pick the correction back into `devel`.
+- Pull requests containing only Markdown files and `docs/` content do not run
+  the CI workflow. Any source, test, build, workflow, or configuration change
+  still runs the complete CI matrix.
 
 ## Verification
 
