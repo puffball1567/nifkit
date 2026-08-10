@@ -100,4 +100,6 @@ jobs:
         shell: pwsh
         run: |
           nim c --cc:clang --mm:${{ matrix.mm }} -d:useMalloc --stackTrace:on --debuginfo --lineDir:on --passC:-fsanitize=address --passL:-fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
+          $clangResourceDir = (& clang --print-resource-dir).Trim()
+          Copy-Item "$clangResourceDir\lib\windows\clang_rt.*.dll" -Destination nimcache
           & "nimcache/test_${{ matrix.mm }}_windows_asan.exe"
