@@ -44,7 +44,7 @@ declaration order, and `Table` entries sorted by their canonical encoded key.
 | `seq[T]`, `array` | `(seq value...)` or `(array value...)` |
 | tuple | `(tuple value...)` |
 | object | `(object "TypeName" (field "name" value)...)` |
-| variant object | reserved for a future profile-v1 implementation; currently rejected |
+| variant object | `(object "TypeName" (field "discriminant" value) (field "activeBranch" value)...)`; the discriminant is decoded first |
 | `ref object` | `nil` or `(ref object-value)`; cycles are rejected |
 | `Table[K,V]`, `OrderedTable[K,V]` | `(table (entry key value)...)` |
 | `HashSet[T]`, `OrderedSet[T]` | `(set value...)` |
