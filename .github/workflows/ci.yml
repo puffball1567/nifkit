@@ -99,5 +99,5 @@ jobs:
       - name: Run repeated managed-memory paths under MSVC AddressSanitizer
         shell: pwsh
         run: |
-          nim c --cc:vcc --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:/fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
+          nim c --cc:vcc --mm:${{ matrix.mm }} -d:useMalloc --stackTrace:on --debuginfo --lineDir:on --passC:/fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
           & "nimcache/test_${{ matrix.mm }}_windows_asan.exe"
