@@ -13,8 +13,8 @@
 - Add canonical `HashSet` and `OrderedSet` typed serialization with duplicate
   item rejection and container limits.
 - Reject typed integer narrowing overflow, invalid UTF-8 strings, and `cstring`.
-- Reject variant objects with `nkeUnsupportedType` rather than risking a Nim
-  case-object branch-transition failure.
+- Add safe, strict typed serialization for variant objects by decoding the
+  discriminant before their active branch fields.
 - Decode typed BIF values directly from validated BIF tokens without an
   intermediate NIF text allocation.
 - Add typed `Range` support with explicit boundary validation on decode.

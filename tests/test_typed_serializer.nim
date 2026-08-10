@@ -107,15 +107,43 @@ suite "typed serializer v1":
     except NifKitError as error:
       check error.kind == nkeUnsupportedType
 
-  test "rejects every active branch of a variant object without a case transition":
+  test "round trips every active branch of a variant object":
     let textValue = VariantRecord(id: "a", kind: vkText, text: "hello")
     let countValue = VariantRecord(id: "b", kind: vkCount, count: 12)
     for value in [textValue, countValue]:
-      try:
-        discard toNif(value)
-        fail()
-      except NifKitError as error:
-        check error.kind == nkeUnsupportedType
+      let nif = toNif(value)
+      let decoded = fromNif(nif, VariantRecord)
+      check decoded.id == value.id
+      check decoded.kind == value.kind
+      case value.kind
+      of vkText: check decoded.text == value.text
+      of vkCount: check decoded.count == value.count
+      let bifDecoded = fromBif(toBif(value), VariantRecord)
+      check bifDecoded.id == value.id
+      check bifDecoded.kind == value.kind
+      case value.kind
+      of vkText: check bifDecoded.text == value.text
+      of vkCount: check bifDecoded.count == value.count
+
+  test "validates variant discriminants and active fields":
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 (object \"VariantRecord\" (field \"id\" \"a\") (field \"text\" \"hello\")))", VariantRecord)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeMissingField
+      check error.path == "$.kind"
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 (object \"VariantRecord\" (field \"id\" \"a\") (field \"kind\" (enum \"VariantKind\" \"vkText\")) (field \"count\" 12)))", VariantRecord)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeMissingField
+      check error.path == "$.text"
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 (object \"VariantRecord\" (field \"id\" \"a\") (field \"kind\" (enum \"VariantKind\" \"vkText\")) (field \"kind\" (enum \"VariantKind\" \"vkText\")) (field \"text\" \"hello\")))", VariantRecord)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeUnknownField
+      check error.path == "$.kind"
 
   test "normalizes Table and OrderedTable entries by key representation":
     var first, second: Table[string, int]
