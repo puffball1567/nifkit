@@ -57,3 +57,47 @@ jobs:
         run: |
           nim c --mm:${{ matrix.mm }} -d:release --nimcache:nimcache/${{ matrix.mm }}-memory -o:nimcache/test_${{ matrix.mm }}_memory tests/test_arc_memory.nim
           valgrind --leak-check=full --errors-for-leak-kinds=all --error-exitcode=1 nimcache/test_${{ matrix.mm }}_memory
+
+  asan:
+    name: ${{ matrix.os }} ${{ matrix.mm }} ASan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under AddressSanitizer
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+        run: |
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:-fsanitize=address --passL:-fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-asan -o:nimcache/test_${{ matrix.mm }}_asan tests/test_arc_memory.nim
+          nimcache/test_${{ matrix.mm }}_asan
+
+  windows-asan:
+    name: Windows ${{ matrix.mm }} MSVC ASan
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under MSVC AddressSanitizer
+        shell: pwsh
+        run: |
+          nim c --cc:vcc --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:/fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
+          & "nimcache/test_${{ matrix.mm }}_windows_asan.exe"
