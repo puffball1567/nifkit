@@ -697,7 +697,12 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
 proc fromNif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
                  options = defaultTypedCodecOptions()): T =
   validLimits(limits)
-  discard nifToBif(source, limits) # validate syntax and all generic codec limits first
+  try:
+    discard nifToBif(source, limits) # validate syntax and all generic codec limits first
+  except NifKitError:
+    raise
+  except BifError as error:
+    typedFail(nkeMalformedInput, error.msg, "$")
   var pos = 0
   let root = parseNode(source, pos, limits, 0)
   skipSpace(source, pos)
@@ -710,7 +715,13 @@ proc fromNif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
 proc fromBif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
                  options = defaultTypedCodecOptions()): T =
   validLimits(limits)
-  let document = parseBif(source, limits)
+  let document =
+    try:
+      parseBif(source, limits)
+    except NifKitError:
+      raise
+    except BifError as error:
+      typedFail(nkeMalformedInput, error.msg, "$")
   var pos = 0
   let root = parseBifNode(document, pos, document.tokens.len, 0, limits)
   if pos != document.tokens.len:
