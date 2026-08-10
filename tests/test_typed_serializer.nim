@@ -1,4 +1,4 @@
-import std/[unittest, options, strutils, tables, sets]
+import std/[unittest, options, strutils, tables, sets, math]
 import ../src/nifkit
 
 type
@@ -28,6 +28,59 @@ type
     child: RefChain
 
 suite "typed serializer v1":
+  test "round-trips primitive boundaries and canonical BIF":
+    check fromNif(toNif(false), bool) == false
+    check fromBif(toBif(true), bool) == true
+    check fromNif(toNif(low(int8)), int8) == low(int8)
+    check fromNif(toNif(high(int8)), int8) == high(int8)
+    check fromNif(toNif(low(int64)), int64) == low(int64)
+    check fromNif(toNif(high(int64)), int64) == high(int64)
+    check fromNif(toNif(low(uint8)), uint8) == low(uint8)
+    check fromNif(toNif(high(uint8)), uint8) == high(uint8)
+    check fromNif(toNif(high(uint64)), uint64) == high(uint64)
+    check fromNif(toNif(-12.5'f32), float32) == -12.5'f32
+    check fromBif(toBif(1.25), float64) == 1.25
+    let value = "こんにちは\n\0\\\""
+    let nif = toNif(value)
+    check fromNif(nif, string) == value
+    check bifToNif(toBif(value)) == nif
+
+  test "round-trips chars, options, arrays, and tuples distinctly":
+    check fromNif(toNif('x'), char) == 'x'
+    check fromNif(toNif('\0'), char) == '\0'
+    check fromBif(toBif('x'), char) == 'x'
+    check fromNif(toNif(none(string)), Option[string]).isNone
+    check fromBif(toBif(some("value")), Option[string]) == some("value")
+    let arrayValue = [1, 2, 3]
+    check fromNif(toNif(arrayValue), array[3, int]) == arrayValue
+    check fromBif(toBif(arrayValue), array[3, int]) == arrayValue
+    let tupleValue = (name: "nif", count: 2, enabled: true)
+    check fromNif(toNif(tupleValue), type(tupleValue)) == tupleValue
+    check fromBif(toBif(tupleValue), type(tupleValue)) == tupleValue
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 (array 1 2))", array[3, int])
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeArrayLengthMismatch
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 (tuple 1 2 true))", type(tupleValue))
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeTypeMismatch
+
+  test "rejects non-finite floats and unknown enum members":
+    for value in [NaN, Inf, NegInf]:
+      try:
+        discard toNif(value)
+        fail()
+      except NifKitError as error:
+        check error.kind == nkeNonFiniteFloat
+    try:
+      discard fromNif("(nifkit\\2Ddata 1 (enum \"State\" \"stMissing\"))", State)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeUnknownEnumMember
+
   test "round-trips a nested data profile value":
     let value = Record(title: "NIF\n\0", count: -12, enabled: true,
       state: stOpen, note: some("hello"), items: @[1, 2, 3])
@@ -43,6 +96,16 @@ suite "typed serializer v1":
       discard fromNif("(nifkit\\2Ddata 1 (object \"Record\" (field \"title\" \"x\")))", Record)
     expect NifKitError:
       discard fromNif("(nifkit\\2Ddata 1 (object \"Record\" (field \"title\" \"x\") (field \"count\" 1) (field \"enabled\" true) (field \"state\" (enum \"State\" \"stOpen\")) (field \"note\" none) (field \"items\" (seq)) (field \"extra\" 1)))", Record)
+    let source = "(nifkit\\2Ddata 1 (object \"Record\" (field \"title\" \"x\") (field \"count\" 1) (field \"enabled\" true) (field \"state\" (enum \"State\" \"stOpen\")) (field \"note\" none) (field \"items\" (seq)) (field \"extra\" 1)))"
+    let decoded = fromNif(source, Record, options = TypedCodecOptions(allowUnknownFields: true, requireTypeNames: true))
+    check decoded.title == "x"
+
+  test "rejects incompatible data profile versions":
+    try:
+      discard fromNif("(nifkit\\2Ddata 2 true)", bool)
+      fail()
+    except NifKitError as error:
+      check error.kind == nkeUnsupportedDataProfile
 
   test "round-trips nil and non-nil ref objects":
     let empty: RefRecord = nil
