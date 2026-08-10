@@ -2,6 +2,8 @@
 
 ## 0.3.1 - 2026-08-10
 
+- Make omitted `CodecLimits` unbounded at the application-policy level;
+  network-facing integrations now choose and pass their own limits explicitly.
 - Add Linux/macOS Clang and Windows MSVC AddressSanitizer coverage for both
   ARC and ORC repeated codec and typed-serializer paths.
 - Document how embedding applications should choose fixed `CodecLimits` at
