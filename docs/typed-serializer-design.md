@@ -23,11 +23,12 @@ proc fromBif*[T](source: string; _: typedesc[T];
 All encoding and decoding APIs accept `CodecLimits`; no typed conversion may
 bypass the bounded NIF/BIF codec.
 
-`defaultCodecLimits()` supplies finite baseline limits, but applications that
-receive untrusted data should define a fixed `CodecLimits` policy for each
-trust boundary. The application—not the peer—chooses the input/output byte,
-depth, string, pool, and container budgets appropriate for that endpoint.
-Typed serializer calls use the supplied limits just as raw NIF/BIF calls do.
+`defaultCodecLimits()` is equivalent to `unlimitedCodecLimits()` and imposes
+no application-level resource policy. Applications that receive untrusted data
+must define a fixed `CodecLimits` policy for each trust boundary. The
+application—not the peer—chooses the input/output byte, depth, string, pool,
+and container budgets appropriate for that endpoint. Typed serializer calls
+use supplied limits just as raw NIF/BIF calls do.
 
 `fromBif` reads the validated BIF token stream directly and does not construct
 an intermediate NIF text string. `toBif` constructs BIF directly while

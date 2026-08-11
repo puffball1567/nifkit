@@ -47,21 +47,27 @@ type
 const
   SupportedBifVersion* = 5
 
-proc defaultCodecLimits*(): CodecLimits =
-  ## Finite defaults suitable for processing network input.
+proc unlimitedCodecLimits*(): CodecLimits =
+  ## No application-level resource policy. Limits remain bounded by the
+  ## platform's `int` range and available resources.
   CodecLimits(
-    maxInputBytes: 16 * 1024 * 1024,
-    maxOutputBytes: 64 * 1024 * 1024,
-    maxNestingDepth: 256,
-    maxTokens: 4 * 1024 * 1024,
-    maxPoolEntries: 1_000_000,
-    maxPoolBytes: 32 * 1024 * 1024,
-    maxStringBytes: 4 * 1024 * 1024,
-    maxIndexEntries: 1_000_000,
-    maxContainerItems: 1_000_000,
-    maxObjectFields: 1_024,
-    maxTrackedReferences: 100_000
+    maxInputBytes: high(int),
+    maxOutputBytes: high(int),
+    maxNestingDepth: high(int),
+    maxTokens: high(int),
+    maxPoolEntries: high(int),
+    maxPoolBytes: high(int),
+    maxStringBytes: high(int),
+    maxIndexEntries: high(int),
+    maxContainerItems: high(int),
+    maxObjectFields: high(int),
+    maxTrackedReferences: high(int)
   )
+
+proc defaultCodecLimits*(): CodecLimits =
+  ## Backward-compatible no-policy default. Network-facing callers must pass
+  ## explicit limits chosen for their own trust boundary.
+  unlimitedCodecLimits()
 
 proc raiseCodecError*(kind: NifKitErrorKind; message: string; offset = -1;
                       path = "$") {.noreturn.} =
