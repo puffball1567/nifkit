@@ -1,4 +1,4 @@
-## Typed NIF data profile v1.  This module is intentionally Nim-only.
+## Typed NIF data profiles v1 and v2. This module is intentionally Nim-only.
 
 import std/[options, strutils, typetraits, math, tables, sets, algorithm, unicode, macros]
 import ./[codec_limits, nif_encoder, bif_decoder]
@@ -6,6 +6,7 @@ import ./[codec_limits, nif_encoder, bif_decoder]
 const
   DataRootTag = "nifkit\\2Ddata"
   DataRootName = "nifkit-data"
+  CurrentDataProfile = 2
   BifKindChar = 1'u32
   BifKindString = 2'u32
   BifKindInt = 3'u32
@@ -16,11 +17,18 @@ const
   BifKindExtended = 10'u32
 
 type
+  ## An opaque sequence of bytes for the typed NIF data profile.
+  ##
+  ## Unlike `string`, this value is not required to be UTF-8. It is suitable
+  ## for images, media, encrypted data, and other binary payloads.
+  NifBytes* = object
+    data*: string
+
   TypedCodecOptions* = object
     allowUnknownFields*: bool
     requireTypeNames*: bool
 
-  DataKind = enum dkAtom, dkString, dkChar, dkCompound
+  DataKind = enum dkAtom, dkString, dkBytes, dkChar, dkCompound
   DataNode = ref object
     kind: DataKind
     text: string
@@ -85,8 +93,32 @@ macro variantDiscriminantName(T: typedesc): untyped =
 proc defaultTypedCodecOptions*(): TypedCodecOptions =
   TypedCodecOptions(requireTypeNames: true)
 
+proc initNifBytes*(data: string): NifBytes =
+  ## Creates an opaque binary value from raw bytes stored in a Nim string.
+  NifBytes(data: data)
+
+proc initNifBytes*(data: openArray[byte]): NifBytes =
+  ## Creates an opaque binary value from a byte sequence.
+  result.data = newString(data.len)
+  for index, value in data:
+    result.data[index] = char(value)
+
+proc toSeq*(value: NifBytes): seq[byte] =
+  ## Returns the opaque payload as bytes.
+  result = newSeq[byte](value.data.len)
+  for index, ch in value.data:
+    result[index] = byte(ord(ch))
+
 proc typedFail(kind: NifKitErrorKind; message, path: string; offset = -1) {.noreturn.} =
   raiseCodecError(kind, message, offset, path)
+
+proc parseDataProfile(values: seq[DataNode]; offset: int): int =
+  if values.len != 3 or values[1].kind != dkAtom:
+    typedFail(nkeUnsupportedDataProfile, "unsupported NIFKit data profile", "$", offset)
+  case values[1].text
+  of "1": 1
+  of $CurrentDataProfile: CurrentDataProfile
+  else: typedFail(nkeUnsupportedDataProfile, "unsupported NIFKit data profile", "$", offset)
 
 proc require(node: DataNode; tag, path: string): seq[DataNode] =
   if node.kind != dkCompound or node.children.len == 0 or
@@ -96,10 +128,10 @@ proc require(node: DataNode; tag, path: string): seq[DataNode] =
     typedFail(nkeTypeMismatch, "expected " & tag, path, node.offset)
   result = node.children
 
-proc quote(value: string; limits: CodecLimits; path: string): string =
+proc quote(value: string; limits: CodecLimits; path: string; requireUtf8 = true): string =
   if value.len > limits.maxStringBytes:
     typedFail(nkeStringLimit, "string exceeds configured limit", path)
-  if validateUtf8(value) >= 0:
+  if requireUtf8 and validateUtf8(value) >= 0:
     typedFail(nkeInvalidUtf8, "string is not valid UTF-8", path)
   result = "\""
   for c in value:
@@ -118,6 +150,7 @@ proc render(node: DataNode; destination: var string; limits: CodecLimits; path: 
   case node.kind
   of dkAtom: destination.boundedAdd(node.text, limits)
   of dkString: destination.boundedAdd(quote(node.text, limits, path), limits)
+  of dkBytes: destination.boundedAdd(quote(node.text, limits, path, false), limits)
   of dkChar:
     destination.boundedAdd('\'', limits)
     destination.boundedAdd(quote(node.text, limits, path)[1 .. ^2], limits)
@@ -271,6 +304,7 @@ proc parseBifNode(document: BifDocument; pos: var int; limit, depth: int;
 
 proc nodeAtom(value: string): DataNode = DataNode(kind: dkAtom, text: value)
 proc nodeString(value: string): DataNode = DataNode(kind: dkString, text: value)
+proc nodeBytes(value: string): DataNode = DataNode(kind: dkBytes, text: value)
 proc compound(tag: string; values: varargs[DataNode]): DataNode =
   DataNode(kind: dkCompound, children: @[nodeAtom(tag)] & @values)
 
@@ -323,6 +357,8 @@ proc emitTypedNode(builder: var TypedBifBuilder; node: DataNode; limits: CodecLi
   case node.kind
   of dkString:
     if validateUtf8(node.text) >= 0: typedFail(nkeInvalidUtf8, "string is not valid UTF-8", "$")
+    builder.emitTypedText(BifKindString, node.text, limits)
+  of dkBytes:
     builder.emitTypedText(BifKindString, node.text, limits)
   of dkChar:
     if node.text.len != 1: typedFail(nkeTypeMismatch, "character must contain one byte", "$")
@@ -396,6 +432,10 @@ proc encodeSet[T](value: T; limits: CodecLimits; path: string): DataNode =
 proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
   when T is cstring:
     typedFail(nkeUnsupportedType, "cstring is unsupported by the typed data profile", path)
+  elif T is NifBytes:
+    if value.data.len > limits.maxStringBytes:
+      typedFail(nkeStringLimit, "byte payload exceeds configured limit", path)
+    compound("bytes", nodeBytes(value.data))
   elif T is distinct:
     type Base = distinctBase(T)
     compound("distinct", nodeString(name(T)), encodeValue(Base(value), limits, path))
@@ -469,7 +509,7 @@ proc toNif*[T](value: T; limits = defaultCodecLimits()): string =
   validLimits(limits)
   if activeReferences.len != 0:
     activeReferences.setLen(0)
-  let root = compound(DataRootTag, nodeAtom("1"), encodeValue(value, limits, "$"))
+  let root = compound(DataRootTag, nodeAtom($CurrentDataProfile), encodeValue(value, limits, "$"))
   root.render(result, limits, "$")
 
 proc toBif*[T](value: T; limits = defaultCodecLimits()): string =
@@ -477,52 +517,52 @@ proc toBif*[T](value: T; limits = defaultCodecLimits()): string =
   if activeReferences.len != 0:
     activeReferences.setLen(0)
   var builder: TypedBifBuilder
-  builder.emitTypedNode(compound(DataRootTag, nodeAtom("1"), encodeValue(value, limits, "$")), limits, 0)
+  builder.emitTypedNode(compound(DataRootTag, nodeAtom($CurrentDataProfile), encodeValue(value, limits, "$")), limits, 0)
   result = encodeBifDocument(builder.document, limits)
   if result.len > limits.maxOutputBytes:
     typedFail(nkeOutputTooLarge, "typed BIF output exceeds configured limit", "$")
 
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
-                    path: string): T
+                    profile: int; path: string): T
 
 proc decodeTableEntry[K, V](target: var Table[K, V]; entry: DataNode;
                             limits: CodecLimits; options: TypedCodecOptions;
-                            path: string) =
+                            profile: int; path: string) =
   if entry.kind != dkCompound or entry.children.len != 3 or
       entry.children[0].kind != dkAtom or entry.children[0].text != "entry":
     typedFail(nkeTypeMismatch, "invalid table entry", path, entry.offset)
-  let key = decodeValue[K](entry.children[1], limits, options, path & ".<key>")
+  let key = decodeValue[K](entry.children[1], limits, options, profile, path & ".<key>")
   if target.hasKey(key):
     typedFail(nkeTypeMismatch, "duplicate table key", path, entry.offset)
-  target[key] = decodeValue[V](entry.children[2], limits, options, path & "[key]")
+  target[key] = decodeValue[V](entry.children[2], limits, options, profile, path & "[key]")
 
 proc decodeOrderedTableEntry[K, V](target: var OrderedTable[K, V]; entry: DataNode;
                                    limits: CodecLimits; options: TypedCodecOptions;
-                                   path: string) =
+                                   profile: int; path: string) =
   if entry.kind != dkCompound or entry.children.len != 3 or
       entry.children[0].kind != dkAtom or entry.children[0].text != "entry":
     typedFail(nkeTypeMismatch, "invalid table entry", path, entry.offset)
-  let key = decodeValue[K](entry.children[1], limits, options, path & ".<key>")
+  let key = decodeValue[K](entry.children[1], limits, options, profile, path & ".<key>")
   if target.hasKey(key):
     typedFail(nkeTypeMismatch, "duplicate table key", path, entry.offset)
-  target[key] = decodeValue[V](entry.children[2], limits, options, path & "[key]")
+  target[key] = decodeValue[V](entry.children[2], limits, options, profile, path & "[key]")
 
 proc decodeSetItem[E](target: var HashSet[E]; node: DataNode;
-                      limits: CodecLimits; options: TypedCodecOptions; path: string) =
-  let item = decodeValue[E](node, limits, options, path)
+                      limits: CodecLimits; options: TypedCodecOptions; profile: int; path: string) =
+  let item = decodeValue[E](node, limits, options, profile, path)
   if item in target:
     typedFail(nkeTypeMismatch, "duplicate set item", path, node.offset)
   target.incl item
 
 proc decodeOrderedSetItem[E](target: var OrderedSet[E]; node: DataNode;
-                             limits: CodecLimits; options: TypedCodecOptions; path: string) =
-  let item = decodeValue[E](node, limits, options, path)
+                             limits: CodecLimits; options: TypedCodecOptions; profile: int; path: string) =
+  let item = decodeValue[E](node, limits, options, profile, path)
   if item in target:
     typedFail(nkeTypeMismatch, "duplicate set item", path, node.offset)
   target.incl item
 
 proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOptions;
-                    path: string): T =
+                    profile: int; path: string): T =
   when T is distinct:
     let values = require(node, "distinct", path)
     if values.len != 3 or values[1].kind != dkString:
@@ -530,10 +570,10 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
     if options.requireTypeNames and values[1].text != name(T):
       typedFail(nkeTypeMismatch, "distinct type name mismatch", path, values[1].offset)
     type Base = distinctBase(T)
-    result = T(decodeValue[Base](values[2], limits, options, path))
+    result = T(decodeValue[Base](values[2], limits, options, profile, path))
   elif T is range:
     type Base = typeof(low(T) + 0)
-    let value = decodeValue[Base](node, limits, options, path)
+    let value = decodeValue[Base](node, limits, options, profile, path)
     if value < low(T) or value > high(T):
       typedFail(nkeTypeMismatch, "value is outside the target range", path, node.offset)
     result = T(value)
@@ -567,6 +607,15 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
       if classify(result) in {fcNan, fcInf, fcNegInf}:
         typedFail(nkeNonFiniteFloat, "non-finite float is unsupported", path, node.offset)
     except ValueError: typedFail(nkeTypeMismatch, "invalid float", path, node.offset)
+  elif T is NifBytes:
+    if profile < 2:
+      typedFail(nkeUnsupportedDataProfile, "byte payloads require typed data profile 2", path, node.offset)
+    let values = require(node, "bytes", path)
+    if values.len != 2 or values[1].kind != dkString:
+      typedFail(nkeTypeMismatch, "expected bytes", path, node.offset)
+    if values[1].text.len > limits.maxStringBytes:
+      typedFail(nkeStringLimit, "byte payload exceeds configured limit", path, values[1].offset)
+    result.data = values[1].text
   elif T is string:
     if node.kind != dkString: typedFail(nkeTypeMismatch, "expected string", path, node.offset)
     if node.text.len > limits.maxStringBytes: typedFail(nkeStringLimit, "string exceeds configured limit", path, node.offset)
@@ -588,48 +637,48 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
     if node.kind == dkAtom and node.text == "none": return none(typeof(default(T).get))
     let values = require(node, "some", path)
     if values.len != 2: typedFail(nkeTypeMismatch, "invalid Option", path, node.offset)
-    result = some(decodeValue[typeof(default(T).get)](values[1], limits, options, path))
+    result = some(decodeValue[typeof(default(T).get)](values[1], limits, options, profile, path))
   elif T is Table:
     let values = require(node, "table", path)
     if values.len - 1 > limits.maxContainerItems:
       typedFail(nkeTokenLimit, "table exceeds configured limit", path, node.offset)
     for i in 1 ..< values.len:
-      decodeTableEntry(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+      decodeTableEntry(result, values[i], limits, options, profile, path & "[" & $(i - 1) & "]")
   elif T is OrderedTable:
     let values = require(node, "table", path)
     if values.len - 1 > limits.maxContainerItems:
       typedFail(nkeTokenLimit, "table exceeds configured limit", path, node.offset)
     for i in 1 ..< values.len:
-      decodeOrderedTableEntry(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+      decodeOrderedTableEntry(result, values[i], limits, options, profile, path & "[" & $(i - 1) & "]")
   elif T is HashSet:
     let values = require(node, "set", path)
     if values.len - 1 > limits.maxContainerItems:
       typedFail(nkeTokenLimit, "set exceeds configured limit", path, node.offset)
     for i in 1 ..< values.len:
-      decodeSetItem(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+      decodeSetItem(result, values[i], limits, options, profile, path & "[" & $(i - 1) & "]")
   elif T is OrderedSet:
     let values = require(node, "set", path)
     if values.len - 1 > limits.maxContainerItems:
       typedFail(nkeTokenLimit, "set exceeds configured limit", path, node.offset)
     for i in 1 ..< values.len:
-      decodeOrderedSetItem(result, values[i], limits, options, path & "[" & $(i - 1) & "]")
+      decodeOrderedSetItem(result, values[i], limits, options, profile, path & "[" & $(i - 1) & "]")
   elif T is seq:
     let values = require(node, "seq", path)
     if values.len - 1 > limits.maxContainerItems: typedFail(nkeTokenLimit, "sequence exceeds configured limit", path, node.offset)
     type Elem = typeof(default(T)[0])
     result = newSeqOfCap[Elem](values.len - 1)
-    for i in 1 ..< values.len: result.add decodeValue[Elem](values[i], limits, options, path & "[" & $(i - 1) & "]")
+    for i in 1 ..< values.len: result.add decodeValue[Elem](values[i], limits, options, profile, path & "[" & $(i - 1) & "]")
   elif T is array:
     let values = require(node, "array", path)
     if values.len - 1 != result.len: typedFail(nkeArrayLengthMismatch, "array length mismatch", path, node.offset)
     for i in 0 ..< result.len:
-      result[i] = decodeValue[typeof(result[i])](values[i + 1], limits, options, path & "[" & $i & "]")
+      result[i] = decodeValue[typeof(result[i])](values[i + 1], limits, options, profile, path & "[" & $i & "]")
   elif T is tuple:
     let values = require(node, "tuple", path)
     var index = 1
     for fieldName, field in fieldPairs(result):
       if index >= values.len: typedFail(nkeArrayLengthMismatch, "tuple length mismatch", path, node.offset)
-      field = decodeValue[typeof(field)](values[index], limits, options, path & "." & fieldName)
+      field = decodeValue[typeof(field)](values[index], limits, options, profile, path & "." & fieldName)
       inc index
     if index != values.len: typedFail(nkeArrayLengthMismatch, "tuple length mismatch", path, node.offset)
   elif T is ref:
@@ -638,7 +687,7 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
     let values = require(node, "ref", path)
     if values.len != 2: typedFail(nkeTypeMismatch, "invalid ref object", path, node.offset)
     new(result)
-    result[] = decodeValue[typeof(result[])](values[1], limits, options, path)
+    result[] = decodeValue[typeof(result[])](values[1], limits, options, profile, path)
   elif T is object:
     let values = require(node, "object", path)
     if values.len < 2 or values[1].kind != dkString: typedFail(nkeTypeMismatch, "invalid object", path, node.offset)
@@ -658,7 +707,7 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
               if match >= 0: typedFail(nkeUnknownField, "duplicate object field", path & "." & fieldName, entry.offset)
               match = i
           if match < 0: typedFail(nkeMissingField, "missing object field", path & "." & fieldName, node.offset)
-          decodeValue[fieldType](values[match].children[2], limits, options, path & "." & fieldName)
+          decodeValue[fieldType](values[match].children[2], limits, options, profile, path & "." & fieldName)
       result = initTypedCaseObject(T, decodeDiscriminant)
     var consumed = newSeq[bool](values.len)
     # The discriminant was assigned in initTypedCaseObject above; fieldPairs
@@ -677,7 +726,7 @@ proc decodeValue[T](node: DataNode; limits: CodecLimits; options: TypedCodecOpti
             match = i
         if match < 0: typedFail(nkeMissingField, "missing object field", path & "." & fieldName, node.offset)
         consumed[match] = true
-        field = decodeValue[typeof(field)](values[match].children[2], limits, options, path & "." & fieldName)
+        field = decodeValue[typeof(field)](values[match].children[2], limits, options, profile, path & "." & fieldName)
       when isVariantObject(T):
         if fieldName == variantDiscriminantName(T):
           for i in 2 ..< values.len:
@@ -708,9 +757,8 @@ proc fromNif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
   skipSpace(source, pos)
   if pos != source.len: typedFail(nkeMalformedInput, "trailing typed NIF data", "$", pos)
   let values = require(root, DataRootTag, "$")
-  if values.len != 3 or values[1].kind != dkAtom or values[1].text != "1":
-    typedFail(nkeUnsupportedDataProfile, "unsupported NIFKit data profile", "$", root.offset)
-  result = decodeValue[T](values[2], limits, options, "$")
+  let profile = parseDataProfile(values, root.offset)
+  result = decodeValue[T](values[2], limits, options, profile, "$")
 
 proc fromBif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
                  options = defaultTypedCodecOptions()): T =
@@ -727,6 +775,5 @@ proc fromBif*[T](source: string; _: typedesc[T]; limits = defaultCodecLimits();
   if pos != document.tokens.len:
     typedFail(nkeMalformedInput, "trailing typed BIF data", "$", pos)
   let values = require(root, DataRootTag, "$")
-  if values.len != 3 or values[1].kind != dkAtom or values[1].text != "1":
-    typedFail(nkeUnsupportedDataProfile, "unsupported NIFKit data profile", "$", root.offset)
-  result = decodeValue[T](values[2], limits, options, "$")
+  let profile = parseDataProfile(values, root.offset)
+  result = decodeValue[T](values[2], limits, options, profile, "$")

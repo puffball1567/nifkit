@@ -26,8 +26,11 @@ type
       count: int
   RefChain = ref object
     child: RefChain
+  BinaryRecord = object
+    name: string
+    content: NifBytes
 
-suite "typed serializer v1":
+suite "typed serializer profiles":
   test "round-trips primitive boundaries and canonical BIF":
     check fromNif(toNif(false), bool) == false
     check fromBif(toBif(true), bool) == true
@@ -85,7 +88,7 @@ suite "typed serializer v1":
     let value = Record(title: "NIF\n\0", count: -12, enabled: true,
       state: stOpen, note: some("hello"), items: @[1, 2, 3])
     let nif = toNif(value)
-    check nif.startsWith("(nifkit\\2Ddata 1 ")
+    check nif.startsWith("(nifkit\\2Ddata 2 ")
     check fromNif(nif, Record) == value
     let bif = toBif(value)
     check fromBif(bif, Record) == value
@@ -100,9 +103,10 @@ suite "typed serializer v1":
     let decoded = fromNif(source, Record, options = TypedCodecOptions(allowUnknownFields: true, requireTypeNames: true))
     check decoded.title == "x"
 
-  test "rejects incompatible data profile versions":
+  test "accepts v1 data and rejects incompatible profile versions":
+    check fromNif("(nifkit\\2Ddata 1 true)", bool)
     try:
-      discard fromNif("(nifkit\\2Ddata 2 true)", bool)
+      discard fromNif("(nifkit\\2Ddata 3 true)", bool)
       fail()
     except NifKitError as error:
       check error.kind == nkeUnsupportedDataProfile
@@ -127,7 +131,7 @@ suite "typed serializer v1":
   test "round-trips distinct values with their declared type name":
     let value = UserId(42)
     let nif = toNif(value)
-    check nif == "(nifkit\\2Ddata 1 (distinct \"UserId\" 42u))"
+    check nif == "(nifkit\\2Ddata 2 (distinct \"UserId\" 42u))"
     check uint64(fromNif(nif, UserId)) == uint64(value)
     check uint64(fromBif(toBif(value), UserId)) == uint64(value)
     expect NifKitError:
@@ -169,6 +173,41 @@ suite "typed serializer v1":
       fail()
     except NifKitError as error:
       check error.kind == nkeUnsupportedType
+
+  test "round-trips arbitrary byte payloads without UTF-8 or base64":
+    let bytes = initNifBytes("\x89PNG\r\n\x1a\n\0\xff")
+    let nif = toNif(bytes)
+    check nif.startsWith("(nifkit\\2Ddata 2 (bytes ")
+    check fromNif(nif, NifBytes) == bytes
+    let bif = toBif(bytes)
+    check fromBif(bif, NifBytes) == bytes
+    check bifToNif(bif) == nif
+    check bytes.toSeq == @[0x89'u8, 0x50'u8, 0x4e'u8, 0x47'u8, 0x0d'u8,
+      0x0a'u8, 0x1a'u8, 0x0a'u8, 0x00'u8, 0xff'u8]
+
+  test "rejects byte payloads in profile v1 and enforces byte limits":
+    expect NifKitError:
+      discard fromNif("(nifkit\\2Ddata 1 (bytes \"x\"))", NifBytes)
+    var limits = defaultCodecLimits()
+    limits.maxStringBytes = 2
+    expect NifKitError:
+      discard toBif(initNifBytes("abc"), limits)
+    var poolLimits = defaultCodecLimits()
+    poolLimits.maxPoolBytes = 2
+    expect NifKitError:
+      discard toBif(initNifBytes("abc"), poolLimits)
+
+  test "round-trips binary fields inside typed objects":
+    let value = BinaryRecord(
+      name: "preview.png",
+      content: initNifBytes("\x89PNG\r\n\x1a\n\0\xff")
+    )
+    let nif = toNif(value)
+    check fromNif(nif, BinaryRecord) == value
+    check fromBif(toBif(value), BinaryRecord) == value
+    let v1 = "(nifkit\\2Ddata 1 (object \"BinaryRecord\" (field \"name\" \"preview.png\") (field \"content\" (bytes \"x\"))))"
+    expect NifKitError:
+      discard fromNif(v1, BinaryRecord)
 
   test "round trips every active branch of a variant object":
     let textValue = VariantRecord(id: "a", kind: vkText, text: "hello")

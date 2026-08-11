@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - Unreleased
+
+- Add typed data profile v2 and `NifBytes`, an opaque bounded byte sequence for
+  images, media, encrypted payloads, and other binary data without Base64
+  expansion.
+- Preserve UTF-8 validation for `string` and keep typed profile v1 decoding for
+  existing values.
+- Document the boundary between in-memory binary values and application-level
+  streaming multipart transfers for large attachments.
+
 ## 0.3.1 - 2026-08-10
 
 - Make omitted `CodecLimits` unbounded at the application-policy level;

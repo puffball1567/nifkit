@@ -1,13 +1,14 @@
 # Typed serializer design
 
 This document defines the general data-exchange profile implemented by the
-typed NIF serializer in NIFKit v0.3. It is deliberately separate from compiler NIF ASTs:
+typed NIF serializer in NIFKit. It is deliberately separate from compiler NIF ASTs:
 compiler-specific tags, line information, and symbol indexes are not part of
 this profile.
 
 ## Status and API
 
-The profile is implemented in the v0.3.0 release. Its public API is:
+Profile v1 was implemented in v0.3.0. Profile v2 is introduced in v0.4.0. Its
+public API is:
 
 ```nim
 proc toNif*[T](value: T; limits = defaultCodecLimits()): string
@@ -34,11 +35,15 @@ use supplied limits just as raw NIF/BIF calls do.
 an intermediate NIF text string. `toBif` constructs BIF directly while
 preserving the same canonical profile representation as `toNif`.
 
-## Canonical profile
+## Canonical profiles
 
-The root is `(nifkit\2Ddata 1 value)`. The escaped hyphen is required by NIF
-tag grammar; its decoded tag name is `nifkit-data`. Version `1` identifies
-these mapping rules. Writers emit UTF-8 byte strings in canonical NIF escaping, fields in
+Profile v1 uses the root `(nifkit\2Ddata 1 value)`. Profile v2 uses
+`(nifkit\2Ddata 2 value)` and adds `NifBytes`. The escaped hyphen is required
+by NIF tag grammar; its decoded tag name is `nifkit-data`. v0.4 writers emit
+profile v2. Readers continue to accept v1 values that do not use v2-only
+mappings.
+
+Writers emit UTF-8 `string` values in canonical NIF escaping, fields in
 declaration order, and `Table` entries sorted by their canonical encoded key.
 
 | Nim value | NIF representation |
@@ -48,6 +53,7 @@ declaration order, and `Table` entries sorted by their canonical encoded key.
 | unsigned integer | decimal integer with `u` suffix |
 | `float32`, `float64` | canonical finite decimal float; non-finite values are rejected initially |
 | `string` | NIF string |
+| `NifBytes` (profile v2) | `(bytes raw-octets)` |
 | `char` | NIF character |
 | `enum` | `(enum "TypeName" "MemberName")` |
 | `Option[T]` | `(some value)` or `none` |
@@ -76,16 +82,28 @@ canonical order rather than its original insertion order.
 
 Decoders reject unknown fields by default; set
 `TypedCodecOptions.allowUnknownFields` to permit them for forward compatibility.
-Missing object fields are errors in profile v1. Enum decoding uses member
+Missing object fields are errors in profiles v1 and v2. Enum decoding uses member
 names, never ordinal values, to avoid silently changing meaning when source
 order changes. Type names are required by default; set
 `TypedCodecOptions.requireTypeNames` to `false` only for an explicitly managed
 compatibility boundary. Schema changes require a new root version or an
-explicitly declared migration.
+explicitly declared migration. `NifBytes` is the v2 mapping; a v1 root that
+contains `(bytes ...)` is rejected.
+
+`NifBytes` is an opaque, bounded octet sequence. It is not UTF-8 validated and
+is encoded into BIF string storage without Base64 expansion. When rendered as
+NIF text, ASCII control bytes use standard NIF escapes. It is suitable for
+image, media, encrypted, or other binary data, but typed conversion fully
+materializes it and is not a streaming file-transfer API.
+
+Applications should use their HTTP stack's streaming multipart or equivalent
+facility for large attachments. Keep the BIF metadata small and apply a
+separate fixed byte budget while streaming the attachment. Do not increase the
+typed BIF metadata limits merely to accommodate a large file.
 
 `Option.none`, `nil`, and an absent object field are distinct states. A
 non-`ref` value cannot decode from `nil`. Reference identity and cycles are out
-of scope for profile version 1; ref values are tree-shaped.
+of scope for the current profiles; ref values are tree-shaped.
 
 ## Error model
 
