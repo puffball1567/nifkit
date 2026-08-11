@@ -144,10 +144,10 @@ budget, and tighten pool, string, and container limits when the data model
 permits it. `CodecLimits` is the enforcement mechanism; choosing these values
 remains the embedding application's responsibility.
 
-### Typed serializer (v0.3)
+### Typed serializer (v0.4)
 
 NIFKit can encode and decode supported Nim values using the typed data profile
-v1. The BIF APIs construct and read BIF directly, so application code need not
+v2. The BIF APIs construct and read BIF directly, so application code need not
 allocate intermediate NIF text.
 
 ```nim
@@ -166,6 +166,20 @@ doAssert decoded == request
 accepts `TypedCodecOptions`. Unknown object fields and type-name mismatches are
 rejected by default. See [the typed serializer design](docs/typed-serializer-design.md)
 for the profile, supported types, canonicalization, and compatibility rules.
+
+`NifBytes` represents bounded arbitrary bytes such as a small image, encrypted
+payload, or document without Base64 expansion. It is intentionally distinct
+from UTF-8 `string`.
+
+```nim
+let thumbnail = initNifBytes(readFile("thumbnail.png"))
+let payload = toBif(thumbnail)
+```
+
+Typed conversion materializes the complete `NifBytes` value. For large images,
+videos, or other attachments, keep BIF for structured metadata and use the
+application's streaming multipart or equivalent transport facility for the raw
+file. Apply separate fixed limits to the metadata and streamed attachment.
 
 Nim applications should call the Nim API directly. Applications may store BIF
 however they want; semantic interpretation belongs to the embedding application

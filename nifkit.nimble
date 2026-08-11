@@ -1,4 +1,4 @@
-version       = "0.3.1"
+version       = "0.4.0"
 author        = "puffball1567"
 description   = "Spec-based NIF/BIF toolkit for multiple languages"
 license       = "MIT"
