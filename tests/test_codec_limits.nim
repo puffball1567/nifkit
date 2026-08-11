@@ -9,6 +9,21 @@ proc expectKind(kind: NifKitErrorKind; body: proc()) =
     check error.kind == kind
 
 suite "codec limits and structured errors":
+  test "omitted limits do not impose an application policy":
+    let limits = defaultCodecLimits()
+    check limits == unlimitedCodecLimits()
+    check limits.maxInputBytes == high(int)
+    check limits.maxOutputBytes == high(int)
+    check limits.maxNestingDepth == high(int)
+    check limits.maxTokens == high(int)
+    check limits.maxPoolEntries == high(int)
+    check limits.maxPoolBytes == high(int)
+    check limits.maxStringBytes == high(int)
+    check limits.maxIndexEntries == high(int)
+    check limits.maxContainerItems == high(int)
+    check limits.maxObjectFields == high(int)
+    check limits.maxTrackedReferences == high(int)
+
   test "NIF input accepts the exact limit and rejects one byte more":
     var limits = defaultCodecLimits()
     limits.maxInputBytes = 3

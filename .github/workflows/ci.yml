@@ -2,7 +2,20 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - devel
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -57,3 +70,118 @@ jobs:
         run: |
           nim c --mm:${{ matrix.mm }} -d:release --nimcache:nimcache/${{ matrix.mm }}-memory -o:nimcache/test_${{ matrix.mm }}_memory tests/test_arc_memory.nim
           valgrind --leak-check=full --errors-for-leak-kinds=all --error-exitcode=1 nimcache/test_${{ matrix.mm }}_memory
+
+  asan:
+    name: ${{ matrix.os }} ${{ matrix.mm }} ASan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under AddressSanitizer
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+        run: |
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:-fsanitize=address --passL:-fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-asan -o:nimcache/test_${{ matrix.mm }}_asan tests/test_arc_memory.nim
+          nimcache/test_${{ matrix.mm }}_asan
+
+  windows-asan:
+    name: Windows ${{ matrix.mm }} Clang ASan
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under Clang AddressSanitizer
+        shell: pwsh
+        run: |
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:useMalloc --stackTrace:on --debuginfo --lineDir:on --passC:-fsanitize=address --passL:-fsanitize=address --nimcache:nimcache/${{ matrix.mm }}-windows-asan -o:nimcache/test_${{ matrix.mm }}_windows_asan.exe tests/test_arc_memory.nim
+          $clangResourceDir = (& clang --print-resource-dir).Trim()
+          Copy-Item "$clangResourceDir\lib\windows\clang_rt.*.dll" -Destination nimcache
+          & "nimcache/test_${{ matrix.mm }}_windows_asan.exe"
+
+  ubsan:
+    name: ${{ matrix.os }} ${{ matrix.mm }} UBSan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under UndefinedBehaviorSanitizer
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:-fsanitize=undefined --passL:-fsanitize=undefined --nimcache:nimcache/${{ matrix.mm }}-ubsan -o:nimcache/test_${{ matrix.mm }}_ubsan tests/test_arc_memory.nim
+          nimcache/test_${{ matrix.mm }}_ubsan
+
+  lsan:
+    name: ${{ matrix.mm }} LSan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under LeakSanitizer
+        env:
+          LSAN_OPTIONS: exitcode=23
+        run: |
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:-fsanitize=leak --passL:-fsanitize=leak --nimcache:nimcache/${{ matrix.mm }}-lsan -o:nimcache/test_${{ matrix.mm }}_lsan tests/test_arc_memory.nim
+          nimcache/test_${{ matrix.mm }}_lsan
+
+  tsan:
+    name: ${{ matrix.os }} ${{ matrix.mm }} TSan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        mm:
+          - arc
+          - orc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.0'
+      - name: Run repeated managed-memory paths under ThreadSanitizer
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          nim c --cc:clang --mm:${{ matrix.mm }} -d:release -d:useMalloc --debuginfo --lineDir:on --passC:-fsanitize=thread --passL:-fsanitize=thread --nimcache:nimcache/${{ matrix.mm }}-tsan -o:nimcache/test_${{ matrix.mm }}_tsan tests/test_arc_memory.nim
+          nimcache/test_${{ matrix.mm }}_tsan

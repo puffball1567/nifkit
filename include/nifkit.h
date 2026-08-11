@@ -18,6 +18,10 @@ typedef struct nifkit_limits {
   size_t max_index_entries;
 } nifkit_limits;
 
+/* A NULL `limits` argument applies no application-level resource policy.
+ * Network-facing callers should provide limits selected for their trust
+ * boundary. */
+
 /*
  * Stable NIFKit C ABI.
  *

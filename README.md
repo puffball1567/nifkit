@@ -9,7 +9,7 @@ payloads.
 - `nifToBif`: NIF text to BIF bytes
 - `bifToNif`: BIF bytes to canonical NIF text
 - `validateBif`: BIF validation without semantic interpretation
-- finite `CodecLimits` and structured `NifKitError` failures for untrusted input
+- caller-supplied `CodecLimits` and structured `NifKitError` failures for untrusted input
 - C ABI compatibility layer for C-compatible consumers
 
 `nifkit` is intentionally a library, not a standalone user-facing CLI. It is
@@ -110,6 +110,39 @@ let boundedNif = bifToNif(bif, limits)
 
 `NifKitError.kind` distinguishes malformed input, unsupported versions, and
 each resource limit without requiring callers to parse messages.
+
+### Choosing limits at an application boundary
+
+The one-argument APIs intentionally impose no application-level resource
+policy. `defaultCodecLimits()` is equivalent to `unlimitedCodecLimits()` and
+only remains bounded by the platform's `int` range and available resources.
+This keeps local conversion and code-generation tools free to process their
+own large inputs without selecting arbitrary library defaults.
+
+An application that accepts network data owns the resource policy. It should
+create fixed limits for each trust boundary and pass them to every conversion
+and validation call. Do not derive limits from peer-controlled data.
+
+```nim
+const ApiBodyLimit = 1 * 1024 * 1024
+
+proc apiCodecLimits(): CodecLimits =
+  result = defaultCodecLimits()
+  result.maxInputBytes = ApiBodyLimit
+  result.maxOutputBytes = ApiBodyLimit
+  result.maxNestingDepth = 64
+  result.maxTokens = 100_000
+  result.maxContainerItems = 10_000
+
+let nif = bifToNif(receivedBif, apiCodecLimits())
+```
+
+Use separate fixed policies when the workloads differ—for example, a small
+public API request and a larger authenticated import. Keep the transport's
+request/response byte cap no larger than the relevant NIFKit input or output
+budget, and tighten pool, string, and container limits when the data model
+permits it. `CodecLimits` is the enforcement mechanism; choosing these values
+remains the embedding application's responsibility.
 
 ### Typed serializer (v0.3)
 
