@@ -53,7 +53,17 @@ strings/symbols/tags, global symbol indexes, and malformed BIF rejection.
 Standalone comments are rejected because NIF 2027 comments are suffix metadata,
 not free-floating syntax nodes. Raw NIF control characters inside strings,
 character literals, suffix comments, and line-info metadata are rejected unless
-they are written with NIF escapes.
+they are written with NIF escapes. Quoted strings additionally accept literal
+`#` and `:` as specified upstream; canonical output keeps the existing escaped
+spelling. Decimal, hexadecimal (`0x`), octal (`0o`), and binary (`0b`) integers
+and decimal floats accept `_` separators between digits. Integer input must fit
+the BIF signed or unsigned 64-bit representation; unsigned values cannot be
+negative. Decoded numbers retain the existing decimal canonical spelling.
+
+The codec tracks the [upstream specification at `a31513c` (2026-10-13)](https://github.com/nim-lang/nifspec/blob/a31513c/doc/nif-spec.md).
+The optional line-based syntax is not enabled: top-level atoms keep their
+existing meaning, independent of line breaks. Use core parenthesized syntax
+for exchange with NIFKit.
 
 BIF decoding renders token-kind-aware canonical NIF. For example, a BIF
 identifier containing `.` is printed with an escaped dot so that it remains an

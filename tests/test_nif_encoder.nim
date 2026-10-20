@@ -66,6 +66,67 @@ suite "NIF to BIF v5 encoder":
     check bifToNif(nifToBif("1E-3")) == "0.001"
     check bifToNif(nifToBif("1E+3")) == "1000.0"
 
+  test "new numeric spellings produce the existing decimal BIF bytes":
+    for (source, decimal) in [
+        ("0xFF", "255"), ("0xff", "255"), ("0o377", "255"),
+        ("0b1111_1111", "255"), ("-0xFF", "-255"),
+        ("0xDEAD_BEEFu", "3735928559u"), ("1_000_000", "1000000"),
+        ("1_234.5_6E+0_2", "1234.56E+02"), ("1_0E-0_2", "0.1"),
+        ("0x1E3", "483"), ("0x1e3", "483"), ("012", "12"),
+        ("-0o377", "-255"), ("-0b1111_1111", "-255"),
+        ("0o377u", "255u"), ("0b1111_1111u", "255u"),
+        ("1_000u", "1000u"), ("-0x0", "0"), ("-0_0.0", "-0.0")]:
+      let bif = nifToBif(source)
+      validateBif(bif)
+      check bif == nifToBif(decimal)
+
+  test "numeric bases retain the BIF integer widths at boundaries":
+    for value in [0'u64, 1'u64, (1'u64 shl 27) - 1, 1'u64 shl 27,
+                  (1'u64 shl 55) - 1, 1'u64 shl 55,
+                  uint64(int64.high), 1'u64 shl 63, uint64.high]:
+      for source in ["0x" & value.toHex(16), "0o" & cast[int64](value).toOct(22),
+                     "0b" & cast[int64](value).toBin(64)]:
+        check nifToBif(source & "u") == nifToBif($value & "u")
+        if value <= uint64(int64.high):
+          check nifToBif(source) == nifToBif($value)
+          check nifToBif("-" & source) == nifToBif("-" & $value)
+    check nifToBif("-0x8000_0000_0000_0000") == nifToBif($int64.low)
+    check nifToBif("-0o1000000000000000000000") == nifToBif($int64.low)
+    check nifToBif("-0b1" & repeat('0', 63)) == nifToBif($int64.low)
+
+  test "rejects invalid bases separators and overflowing integers":
+    for source in ["0x", "0o", "0b", "0o8", "0b102", "0xG", "0XFF",
+                   "0x_FF", "0o_77", "0b_11", "1_", "1__2", "1_.0",
+                   "1._0", "1E_2", "1E+_2", "1E-_2", "1_u", "1u_",
+                   "0xFF_u", "0xF__Fu", "0x1.0", "0o1E3", "0b1.0",
+                   "0xFF.0u", "+0xFF", "-1u", "-0x1u", "-0o1u", "-0b1u",
+                   "9223372036854775808", "-9223372036854775809",
+                   "18446744073709551616u", "0x8000000000000000",
+                   "-0x8000000000000001", "0x1_0000_0000_0000_0000u",
+                   "0o2000000000000000000000u", "0b1" & repeat('0', 64) & "u"]:
+      expect BifError:
+        discard nifToBif(source)
+    check bifToNif(nifToBif("0xFF")) == "255"
+
+  test "quoted string punctuation retains existing canonical escaping":
+    for (source, escaped) in [
+        ("\"a#b:c;d\"", "\"a\\23b\\3Ac;d\""),
+        ("\"2026-10-11T12:00:00Z\"", "\"2026-10-11T12\\3A00\\3A00Z\""),
+        ("\"#:\"", "\"\\23\\3A\""),
+        ("\"key: value; # text\"#comment#", "\"key\\3A value; \\23 text\"#comment#")]:
+      let bif = nifToBif(source)
+      check bif == nifToBif(escaped)
+      check bifToNif(bif) == escaped
+
+  test "new number syntax does not reinterpret escaped identifiers or symbols":
+    for source in ["\\30xFF", "\\31_000", "x.1_000", "(\\30xFF\\2Ename x)"]:
+      let bif = nifToBif(source)
+      validateBif(bif)
+      check nifToBif(bifToNif(bif)) == bif
+
+  test "core top-level atoms keep their existing interpretation":
+    check bifToNif(nifToBif("info 12")) == "info\n12"
+
   test "rejects invalid unescaped identifiers and symbols":
     for source in ["foo-bar", "1abc", "thing.-0.mod", "(bad-tag x)",
                    "(. x)", "(.123 x)"]:
@@ -96,7 +157,7 @@ suite "NIF to BIF v5 encoder":
     check bifToNif(nifToBif("\\31")) == "\\31"
 
   test "rejects raw control characters inside escaped-data contexts":
-    for source in ["\"a#b\"", "\"a(b\"", "'('", "(record#bad:comment# value)",
+    for source in ["\"a(b\"", "'('", "'#'", "':'", "(record#bad:comment# value)",
                    "(record@1,0,file:name value)"]:
       expect BifError:
         discard nifToBif(source)

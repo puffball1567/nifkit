@@ -24,6 +24,14 @@ const Fixtures = [
     source: "(numbers -1 -34359738368 0u 18446744073709551615u 1.5 1E3)",
     canonical: "(numbers -1 -34359738368 0u 18446744073709551615u 1.5 1000.0)"),
   SpecFixture(
+    name: "numeric bases and digit separators from the current specification",
+    source: "(numbers 0xFF 0xff 0o377 0b1111_1111 -0xFF 0xDEAD_BEEFu 1_000_000 1_234.5_6E+0_2)",
+    canonical: "(numbers 255 255 255 255 -255 3735928559u 1000000 123456.0)"),
+  SpecFixture(
+    name: "literal string punctuation and suffix comment from the specification",
+    source: "(tag 0 \"2026-10-11T12:00:00Z\")\n\"key: value; # text\"#comment#",
+    canonical: "(tag 0 \"2026-10-11T12\\3A00\\3A00Z\")\n\"key\\3A value; \\23 text\"#comment#"),
+  SpecFixture(
     name: "adjacent empty nodes and nested tags",
     source: "(root ... (child . . .))",
     canonical: "(root . . . (child . . .))"),
