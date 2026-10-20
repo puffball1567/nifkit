@@ -25,6 +25,10 @@ let typedBif = toBif(typedValue)
 
 for _ in 0 ..< 300:
   doAssert bifToNif(nifToBif(validNif)) == validNif
+  doAssert nifToBif("(record 0xFF 1_000u \"key: #value\")") ==
+    nifToBif("(record 255 1000u \"key\\3A\\20\\23value\")")
+  rejects do (): discard nifToBif("0x1_0000_0000_0000_0000u")
+  rejects do (): discard nifToBif("1__2")
   rejects do (): validateBif("not-bif")
 
   var depthLimits = defaultCodecLimits()

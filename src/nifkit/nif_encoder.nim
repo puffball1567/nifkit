@@ -97,41 +97,31 @@ proc hasEscapedBytes(atom: BareAtom): bool =
   for value in atom.escaped:
     if value: return true
 
-proc scanDigits(value: string; pos: var int): int =
-  while pos < value.len and value[pos] in {'0'..'9'}:
-    inc pos
-    inc result
-
-proc isUIntLiteral(value: string): bool =
-  if value.len < 2 or value[^1] != 'u': return false
-  for i in 0 ..< value.len - 1:
-    if value[i] notin {'0'..'9'}: return false
-  true
-
-proc isSignedIntLiteral(value: string): bool =
-  var pos = 0
-  if pos < value.len and value[pos] == '-': inc pos
-  let digits = scanDigits(value, pos)
-  digits > 0 and pos == value.len
-
-proc isFloatLiteral(value: string): bool =
-  var pos = 0
-  if pos < value.len and value[pos] == '-': inc pos
-  if scanDigits(value, pos) == 0: return false
-  if pos < value.len and value[pos] == '.':
-    inc pos
-    if scanDigits(value, pos) == 0: return false
-    if pos < value.len and value[pos] == 'E':
+proc scanDigits(value: string; pos: var int; digits: set[char]): int =
+  while pos < value.len:
+    if value[pos] in digits:
       inc pos
-      if pos < value.len and value[pos] in {'+', '-'}: inc pos
-      if scanDigits(value, pos) == 0: return false
-    return pos == value.len
-  if pos < value.len and value[pos] == 'E':
-    inc pos
-    if pos < value.len and value[pos] in {'+', '-'}: inc pos
-    if scanDigits(value, pos) == 0: return false
-    return pos == value.len
-  false
+      inc result
+    elif value[pos] == '_':
+      if result == 0 or pos + 1 >= value.len or value[pos + 1] notin digits:
+        fail("invalid NIF numeric digit separator")
+      inc pos
+    else:
+      break
+
+proc stringData(e: var Encoder): string =
+  # Only quoted strings permit raw '#' and ':'. Keep the shared escaped-data
+  # helpers strict for comments, filenames, and character literals.
+  while e.pos < e.input.len and e.input[e.pos] != '"':
+    let c = e.input[e.pos]
+    if c == '\\':
+      result.add readNifEscape(e.input, e.pos)
+    else:
+      if (isRawNifControl(c) and c notin {'#', ':'}) or
+          (ord(c) < 32 and c notin {'\t', '\r', '\n'}):
+        fail("unescaped NIF control character in string literal")
+      result.add c
+      inc e.pos
 
 proc bare(e: var Encoder): BareAtom =
   let start = e.pos
@@ -212,6 +202,72 @@ proc emitSigned(e: var Encoder; value: int64) =
                 else: uint64(value) and ((1'u64 shl bits) - 1)
   e.emit(KindInt, encoded)
 
+proc emitNumber(e: var Encoder; value: string) =
+  var pos = 0
+  let negative = value[0] == '-'
+  if negative: inc pos
+  var base = 10'u64
+  var digits = {'0'..'9'}
+  if pos + 1 < value.len and value[pos] == '0':
+    case value[pos + 1]
+    of 'x':
+      base = 16
+      digits = {'0'..'9', 'a'..'f', 'A'..'F'}
+    of 'o':
+      base = 8
+      digits = {'0'..'7'}
+    of 'b':
+      base = 2
+      digits = {'0', '1'}
+    else: discard
+    if base != 10: pos += 2
+  let firstDigit = pos
+  if scanDigits(value, pos, digits) == 0:
+    fail("expected digits in NIF number")
+  let endDigits = pos
+  var floating = false
+  if base == 10:
+    if pos < value.len and value[pos] == '.':
+      floating = true
+      inc pos
+      if scanDigits(value, pos, digits) == 0:
+        fail("expected digits after NIF decimal point")
+    if pos < value.len and value[pos] == 'E':
+      floating = true
+      inc pos
+      if pos < value.len and value[pos] in {'+', '-'}: inc pos
+      if scanDigits(value, pos, digits) == 0:
+        fail("expected digits in NIF exponent")
+  if floating:
+    if pos != value.len: fail("invalid NIF floating point literal")
+    e.emit(KindFloat, cast[uint64](parseFloat(value.replace("_", ""))))
+    return
+  let unsigned = pos < value.len and value[pos] == 'u'
+  if unsigned: inc pos
+  if pos != value.len: fail("invalid NIF integer literal")
+  if unsigned and negative: fail("negative NIF unsigned integer")
+  let limit =
+    if unsigned: uint64.high
+    elif negative: 1'u64 shl 63
+    else: uint64(int64.high)
+  var magnitude = 0'u64
+  for i in firstDigit ..< endDigits:
+    let c = value[i]
+    if c == '_': continue
+    let digit =
+      if c in {'0'..'9'}: uint64(ord(c) - ord('0'))
+      elif c in {'a'..'f'}: uint64(ord(c) - ord('a') + 10)
+      else: uint64(ord(c) - ord('A') + 10)
+    if magnitude > (limit - digit) div base:
+      fail("NIF integer exceeds the supported BIF 64-bit range")
+    magnitude = magnitude * base + digit
+  if unsigned:
+    e.emit(KindUInt, magnitude)
+  elif negative:
+    e.emitSigned(if magnitude == (1'u64 shl 63): int64.low else: -int64(magnitude))
+  else:
+    e.emitSigned(int64(magnitude))
+
 proc emitText(e: var Encoder; kind: uint32; value: string; symbol = false) =
   if value.len <= 3:
     var packed = 1'u64 or (uint64(value.len) shl 1)
@@ -283,7 +339,7 @@ proc parseNode(e: var Encoder; parent: LineInfo) =
     discard e.attachSuffix(parent)
   of '"':
     inc e.pos
-    e.emitText(KindString, unescapeNifData(e.input, e.pos, {'"'}))
+    e.emitText(KindString, e.stringData())
     if e.pos >= e.input.len: fail("unterminated NIF string literal")
     inc e.pos
     discard e.attachSuffix(parent)
@@ -316,13 +372,8 @@ proc parseNode(e: var Encoder; parent: LineInfo) =
   else:
     let parsed = e.bare()
     let atom = parsed.text
-    if not parsed.hasEscapedBytes and isUIntLiteral(atom):
-      e.emit(KindUInt, parseBiggestUInt(atom[0 .. ^2]).uint64)
-    elif not parsed.hasEscapedBytes and isFloatLiteral(atom):
-      e.emit(KindFloat, cast[uint64](parseFloat(atom)))
-    elif not parsed.hasEscapedBytes and isSignedIntLiteral(atom):
-      let value = parseBiggestInt(atom)
-      e.emitSigned(value)
+    if not parsed.hasEscapedBytes and atom[0] in {'0'..'9', '-'}:
+      e.emitNumber(atom)
     elif atom.contains('.'):
       if parsed.rawInvalid or not isSymbolText(parsed):
         fail("invalid NIF symbol")

@@ -136,6 +136,25 @@ int main(void) {
   nifkit_free(decoded);
   nifkit_free(bif);
 
+  const char *spec_nif = "(record 0xFF 0b1111_1111u 1_000 \"key: #value\")";
+  const char *spec_canonical = "(record 255 255u 1000 \"key\\3A \\23value\")";
+  bif = NULL;
+  bif_len = 0;
+  assert(nifkit_nif_to_bif(spec_nif, strlen(spec_nif), &bif, &bif_len) == 0);
+  assert(nifkit_validate_bif(bif, bif_len) == 0);
+  assert(nifkit_bif_to_nif(bif, bif_len, &decoded, &decoded_len) == 0);
+  assert(decoded_len == strlen(spec_canonical));
+  assert(memcmp(decoded, spec_canonical, decoded_len) == 0);
+  nifkit_free(decoded);
+  nifkit_free(bif);
+
+  const char *bad_number = "0x1_0000_0000_0000_0000u";
+  bad_out = (void *)0x1;
+  bad_len = 999;
+  assert(nifkit_nif_to_bif(bad_number, strlen(bad_number), &bad_out, &bad_len) != 0);
+  assert(bad_out == NULL && bad_len == 0);
+  assert(nifkit_last_error()[0] != '\0');
+
   const char nul_nif[] = "\"a\\00b\"";
   bif = NULL;
   bif_len = 0;
