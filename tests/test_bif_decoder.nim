@@ -20,16 +20,21 @@ proc inlineStringBif(value: string): string =
 proc addLe32(dest: var string; value: uint32) =
   for shift in countup(0, 24, 8): dest.add char((value shr shift) and 0xff)
 
+proc addPool(dest: var string; pool: openArray[string]) =
+  for item in pool:
+    doAssert item.len < 241
+    dest.add char(item.len)
+    dest.add item
+
 proc specificationBif(tokens: openArray[uint32]; tags, strings, syms,
                       files: openArray[string]; index = "\0"): string =
   doAssert tokens.len < 241 and tags.len < 241 and strings.len < 241
   doAssert syms.len < 241 and files.len < 241
   var pools = ""
-  for pool in [tags, strings, syms, files]:
-    for item in pool:
-      doAssert item.len < 241
-      pools.add char(item.len)
-      pools.add item
+  pools.addPool(tags)
+  pools.addPool(strings)
+  pools.addPool(syms)
+  pools.addPool(files)
   let beforePad = 16 + 5
   let pad = (4 - (beforePad and 3)) and 3
   let indexOffset = beforePad + pad + tokens.len * 4 + pools.len
