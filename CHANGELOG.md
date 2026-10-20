@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.4.0 - Unreleased
+## 0.4.1 - 2026-10-21
+
+- Track the NIF specification at `a31513c` (2026-10-13): accept hexadecimal,
+  octal, and binary integers, digit separators, and literal `#` and `:` in
+  quoted strings. Preserve public APIs, C ABI, BIF v5 bytes for equivalent
+  values, and existing canonical output. Reject overflowing integers without
+  truncation or signed reinterpretation.
+- Keep the BIF decoder fixtures compatible with Nim 2.2.12.
+
+## 0.4.0 - 2026-08-11
 
 - Add typed data profile v2 and `NifBytes`, an opaque bounded byte sequence for
   images, media, encrypted payloads, and other binary data without Base64

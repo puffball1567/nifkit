@@ -30,6 +30,8 @@ payload bytes.
 ## Conformance Target
 
 The target is full conformance with NIF 2027 text and BIF v5 binary payloads.
+The specification baseline is
+[`nim-lang/nifspec` at `a31513c` (2026-10-13)](https://github.com/nim-lang/nifspec/blob/a31513c/doc/nif-spec.md).
 Release candidates should not be described as "partial" or "subset"
 implementations. If a spec feature is not implemented yet, it must be tracked as
 a release blocker before publishing a stable tag.
@@ -45,7 +47,9 @@ The codec currently verifies:
   literals, suffix comments, and line-info filenames/comments
 - `.` empty nodes, including adjacent empty nodes such as `...`
 - signed integers, unsigned integers, and floating point numbers with `.` or
-  `E`
+  `E`, including digit separators and hexadecimal, octal, and binary integers
+- literal `#`, `:`, and `;` in quoted strings, without relaxing the grammar of
+  comments, filenames, identifiers, symbols, or character literals
 - compound nodes, directives, and language nesting as regular NIF tags
 - suffix line information, base62 diffs, negative `~` shorthand, filenames, and
   comments
@@ -64,6 +68,13 @@ semantic AST and suffix metadata, but it does not promise byte-for-byte source
 formatting preservation. Whitespace outside literals is ignored during parsing.
 Standalone comments are rejected: comments in NIF 2027 are suffix metadata, not
 free-floating syntax nodes.
+
+The optional line-based syntax is not enabled. Existing top-level atoms remain
+atoms rather than implicit compound nodes, so whitespace-only formatting changes
+do not change a caller's AST. Full core syntax conformance does not require this
+extension. Quoted string punctuation and alternate numeric spellings produce
+the same BIF bytes as their escaped-string and decimal-number equivalents.
+Canonical output and public Nim/C signatures retain their existing forms.
 
 Canonical rendering is token-kind aware. For example, a BIF `Ident` whose bytes
 contain `.` is rendered with an escaped dot so that a later NIF parser still sees
