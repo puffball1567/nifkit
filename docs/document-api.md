@@ -7,20 +7,20 @@ output. It does not interpret tags, resolve program symbols, or compile code.
 ```nim
 import nifkit/document
 
-let document = parseNif("(record title \"before\" count 1)")
-let record = document[0]
+let doc = parseNif("(record title \"before\" count 1)")
+let record = doc[0]
 record[1].text = "after"
 
-for node in document.walk():
+for node in doc.walk():
   if node.kind == nfInt:
     node.intValue = node.intValue + 1
 
-record.add document.newString("added")
-doAssert document.renderNif() == "(record title \"after\" count 2 \"added\")"
+record.add doc.newString("added")
+doAssert doc.renderNif() == "(record title \"after\" count 2 \"added\")"
 
-let binary = document.renderBif()
+let binary = doc.renderBif()
 let loaded = parseBifTree(binary)
-doAssert loaded.renderNif() == document.renderNif()
+doAssert loaded.renderNif() == doc.renderNif()
 ```
 
 Import `nifkit/document` to opt into the tree API. Add `import nifkit` when the
@@ -76,10 +76,10 @@ replaces a root or child and detaches the previous node. Self replacement is
 a no-op. Tree edits cannot introduce a cycle.
 
 ```nim
-let document = parseNif("(first 1) (second)")
-let moved = document[0].remove(0)
-document[1].add moved
-document[0] = document.newCompound("replacement")
+let doc = parseNif("(first 1) (second)")
+let moved = doc[0].remove(0)
+doc[1].add moved
+doc[0] = doc.newCompound("replacement")
 ```
 
 `node.parent` returns `Option[NifNode]`; roots and detached nodes have no node
@@ -94,7 +94,7 @@ sessions, copy reachable roots into a fresh document to discard detached data:
 
 ```nim
 let compacted = newNifDocument()
-for root in document:
+for root in doc:
   compacted.add compacted.cloneSubtree(root)
 ```
 
