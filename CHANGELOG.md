@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Add an editable, language-neutral document API for NIF and BIF, including
-  stable node handles, typed scalar access, root/child editing, parent lookup,
+- Add an opt-in `nifkit/document` API for editable, language-neutral NIF and BIF,
+  including stable node handles, typed scalar access, root/child editing, parent lookup,
   subtree cloning, preorder traversal, source information, and canonical output.
 - Add direct NIF token parsing, token-document rendering, and NIF validation
   without an intermediate serialized BIF payload. Preserve existing Nim APIs,

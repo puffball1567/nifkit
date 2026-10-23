@@ -5,7 +5,7 @@ It supports inspection, preorder traversal, editing, cloning, and canonical
 output. It does not interpret tags, resolve program symbols, or compile code.
 
 ```nim
-import nifkit
+import nifkit/document
 
 let document = parseNif("(record title \"before\" count 1)")
 let record = document[0]
@@ -23,8 +23,9 @@ let loaded = parseBifTree(binary)
 doAssert loaded.renderNif() == document.renderNif()
 ```
 
-Import `nifkit/document` directly when only the tree API is needed. Import
-`nifkit` to use the tree API together with the existing codec and typed APIs.
+Import `nifkit/document` to opt into the tree API. Add `import nifkit` when the
+existing codec or typed APIs are also needed. The legacy `nifkit` umbrella does
+not re-export the new node operations, preserving its existing namespace.
 The existing `parseBif` still returns `BifDocument`, the low-level token/pool
 representation. `parseBifTree` is the new editable-tree entry point.
 
@@ -169,6 +170,8 @@ The document API is additive. Existing `nifToBif`, `bifToNif`, `parseBif`,
 existing signatures. Existing core NIF/BIF documents and typed data profiles
 remain readable. Downstream applications can adopt the new API independently;
 they do not need a coordinated update merely because NIFKit is upgraded.
+The editable API lives in its own opt-in module, so existing imports do not
+acquire additional general-purpose node constructors and editing operations.
 
 Low-level integrations can also use `parseNifTokens` and `renderBifDocument`
 with `BifDocument`, avoiding intermediate binary serialization. These do not

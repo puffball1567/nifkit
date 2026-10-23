@@ -1,5 +1,6 @@
 import std/[unittest, strutils, sequtils, math, options]
 import ../src/nifkit
+import ../src/nifkit/document
 
 template expectKind(expected: NifKitErrorKind; body: untyped) =
   block:

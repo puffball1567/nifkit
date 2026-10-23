@@ -1,4 +1,4 @@
-import nifkit
+import nifkit/document
 
 let document = parseNif("(record title \"before\" count 1)")
 let record = document[0]

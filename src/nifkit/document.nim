@@ -5,7 +5,7 @@ import std/[math, strutils, options]
 import ./[bif_decoder, nif_encoder, codec_limits, line_info]
 import ./private/[bif_tokens, bif_builder]
 
-export line_info.LineInfo
+export codec_limits, line_info.LineInfo
 
 type
   NifNodeKind* = enum

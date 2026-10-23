@@ -1,5 +1,6 @@
 ## Repeated ARC paths intended to run under Valgrind in CI.
 import ../src/nifkit
+import ../src/nifkit/document
 import std/options
 
 type
