@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Add an editable, language-neutral document API for NIF and BIF, including
+  stable node handles, typed scalar access, root/child editing, parent lookup,
+  subtree cloning, preorder traversal, source information, and canonical output.
+- Add direct NIF token parsing, token-document rendering, and NIF validation
+  without an intermediate serialized BIF payload. Preserve existing Nim APIs,
+  typed profiles, and the C ABI for independently updated downstream users.
+- Use explicit work stacks for core text parsing and rendering and for tree
+  operations. Enforce configured tree/container budgets, reject invalid edits
+  and cycles, and regenerate BIF pools, jumps, and symbol indexes after edits.
+- Reject overflowing line-information values with recoverable errors and fix
+  hidden-symbol indexing when a definition carries suffix metadata.
+- Reject out-of-range BIF characters and overflowing extension bits instead of
+  silently truncating them; retain valid signed 84-bit carrier sign extension.
+- Release typed-serializer reference-tracking scratch storage after successful
+  and failed conversions, and track allocator-backed memory in Valgrind CI.
+- Exercise editable documents under the ARC/ORC memory-safety checks, including
+  deep trees, wide tag jumps, malformed inputs, and legacy codec compatibility.
+
 ## 0.4.1 - 2026-10-21
 
 - Track the NIF specification at `a31513c` (2026-10-13): accept hexadecimal,

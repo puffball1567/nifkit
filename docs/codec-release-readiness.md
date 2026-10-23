@@ -7,7 +7,8 @@ true:
 - Truncation, malformed varint, tag jump, index, pool, version, endianness,
   magic, trailing-byte, and fuzz corpus cases run in CI.
 - C ABI contract tests cover both existing and limits-aware entry points.
-- Linux ARC Valgrind reports zero errors and no bytes in use at exit.
+- Linux ARC and ORC Valgrind runs use `-d:useMalloc` to track allocations and
+  report zero errors and no bytes in use at exit.
 - The full Linux/macOS/Windows matrix passes on Nim 2.2.0 and stable.
 - The release PR is merged from `devel` to `main`; the version is tagged from
   `main`, never from a feature branch.

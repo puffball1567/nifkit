@@ -87,6 +87,8 @@ proc parse62(source: string; pos: var int): int64 =
   while pos < source.len:
     let d = digit62(source[pos])
     if d < 0: break
+    if result > (int64.high - d) div 62:
+      raise newException(ValueError, "NIF line-info value exceeds int64")
     result = result * 62 + d
     inc pos
     inc digits
@@ -116,8 +118,13 @@ proc parseLineInfo*(source: string; pos: var int; parent: LineInfo): LineInfo =
     if pos < source.len and source[pos] == ',':
       inc pos
       result.filename = unescapeNifData(source, pos, {'#', ' ', '\t', '\r', '\n', ')'})
-  result.column = parent.column + columnDiff
-  result.line = parent.line + lineDiff
+  template checkedPosition(base, delta: int64): int64 =
+    if (delta > 0 and base > int64.high - delta) or
+        (delta < 0 and base < int64.low - delta):
+      raise newException(ValueError, "NIF line-info position exceeds int64")
+    base + delta
+  result.column = checkedPosition(parent.column, columnDiff)
+  result.line = checkedPosition(parent.line, lineDiff)
   if result.filename.len == 0: result.filename = parent.filename
   if pos < source.len and source[pos] == '#':
     inc pos
