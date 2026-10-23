@@ -1,6 +1,7 @@
 ## BIF v5 decoder implemented from the published NIF/BIF specification.
 
 import ./[line_info, codec_limits]
+import ./private/bif_tokens
 
 export codec_limits
 
@@ -12,20 +13,6 @@ type
     syms*: seq[string]
     filenames*: seq[string]
     index*: seq[tuple[symbolId: uint64, tokenPos: uint64, visibility: uint64]]
-
-const
-  KindDot = 0'u32
-  KindChar = 1'u32
-  KindString = 2'u32
-  KindInt = 3'u32
-  KindUInt = 4'u32
-  KindFloat = 5'u32
-  KindSymbol = 6'u32
-  KindSymbolDef = 7'u32
-  KindIdent = 8'u32
-  KindTag = 9'u32
-  KindExtended = 10'u32
-  KindLineInfo = 11'u32
 
 proc fail(message: string; offset = -1) {.noreturn.} =
   raiseCodecError(nkeMalformedInput, message, offset)
@@ -137,70 +124,6 @@ proc parseBif*(data: string; limits = defaultCodecLimits()): BifDocument =
   if indexPos != data.len:
     fail("unexpected trailing BIF data")
 
-proc kind(word: uint32): uint32 {.inline.} = word and 0x0f'u32
-proc payload(word: uint32): uint64 {.inline.} = uint64(word shr 4)
-
-proc widePayload(doc: BifDocument; pos: int): tuple[value: uint64, next: int] =
-  if pos >= doc.tokens.len: fail("invalid BIF token position")
-  result.value = payload(doc.tokens[pos])
-  result.next = pos + 1
-  var shift = 28
-  while result.next < doc.tokens.len and kind(doc.tokens[result.next]) == KindExtended:
-    if shift >= 64: fail("BIF value exceeds supported width")
-    result.value = result.value or (payload(doc.tokens[result.next]) shl shift)
-    shift += 28
-    inc result.next
-
-proc isAsciiLetter(c: char): bool =
-  c in {'A'..'Z'} or c in {'a'..'z'}
-
-proc isIdentStartByte(c: char): bool =
-  isAsciiLetter(c) or c == '_' or ord(c) >= 128
-
-proc isIdentCharByte(c: char): bool =
-  isIdentStartByte(c) or c in {'0'..'9'}
-
-proc textValue(doc: BifDocument; value: uint64; symbols: bool): string =
-  if (value and 1) == 1:
-    let n = int((value shr 1) and 3)
-    for i in 0 ..< n: result.add char((value shr (3 + i * 8)) and 0xff)
-  else:
-    let id = int(value shr 1)
-    let pool = if symbols: doc.syms else: doc.strings
-    if id <= 0 or id > pool.len: fail("invalid BIF string pool id")
-    result = pool[id - 1]
-
-proc takeLineInfo(doc: BifDocument; pos: var int; parent: LineInfo):
-    tuple[present: bool, value: LineInfo] =
-  if pos >= doc.tokens.len or kind(doc.tokens[pos]) != KindLineInfo:
-    return (false, parent)
-  result.present = true
-  let first = payload(doc.tokens[pos])
-  var fileId: int
-  if pos + 1 < doc.tokens.len and kind(doc.tokens[pos + 1]) == KindExtended:
-    let second = payload(doc.tokens[pos + 1])
-    let packed = first or (second shl 28)
-    result.value.column = int64(packed and 0x3ff)
-    fileId = int((packed shr 10) and 0x3fff)
-    result.value.line = int64((packed shr 24) and 0xffffffff'u64)
-    pos += 2
-    if pos < doc.tokens.len and kind(doc.tokens[pos]) == KindExtended:
-      let commentId = int(payload(doc.tokens[pos]))
-      inc pos
-      if commentId <= 0 or commentId > doc.strings.len:
-        fail("invalid BIF line-info comment id")
-      result.value.comment = doc.strings[commentId - 1]
-  else:
-    fileId = int((first shr 7) and 0x7f)
-    result.value.column = int64(first and 0x7f)
-    result.value.line = int64((first shr 14) and 0x3fff)
-    inc pos
-  if fileId > doc.filenames.len:
-    fail("invalid BIF line-info filename id")
-  result.value.filename =
-    if fileId == 0: ""
-    else: doc.filenames[fileId - 1]
-
 proc appendEscaped(destination: var string; value: string; limits: CodecLimits) =
   const Hex = "0123456789ABCDEF"
   for c in value:
@@ -269,18 +192,19 @@ proc renderInto(doc: BifDocument; pos: int; limit: int; parent: LineInfo;
   case k
   of KindDot: destination.boundedAdd('.', limits)
   of KindChar:
+    if wide.value > 255: fail("BIF character exceeds one byte", pos)
     destination.boundedAdd('\'', limits)
     destination.appendEscaped($char(wide.value and 0xff), limits)
     destination.boundedAdd('\'', limits)
   of KindString:
     destination.boundedAdd('"', limits)
-    destination.appendEscaped(doc.textValue(wide.value, false), limits)
+    destination.appendEscaped(doc.textValue(wide.value, false, limits), limits)
     destination.boundedAdd('"', limits)
-  of KindIdent: destination.appendIdentifier(doc.textValue(wide.value, false), limits)
-  of KindSymbol: destination.appendSymbolName(doc.textValue(wide.value, true), limits)
+  of KindIdent: destination.appendIdentifier(doc.textValue(wide.value, false, limits), limits)
+  of KindSymbol: destination.appendSymbolName(doc.textValue(wide.value, true, limits), limits)
   of KindSymbolDef:
     destination.boundedAdd(':', limits)
-    destination.appendSymbolName(doc.textValue(wide.value, true), limits)
+    destination.appendSymbolName(doc.textValue(wide.value, true, limits), limits)
   of KindInt:
     let bits = min(64, 28 * (wide.next - pos))
     let signed = if bits == 64: cast[int64](wide.value) else:
@@ -290,36 +214,52 @@ proc renderInto(doc: BifDocument; pos: int; limit: int; parent: LineInfo;
     destination.boundedAdd($signed, limits)
   of KindUInt: destination.boundedAdd($wide.value & "u", limits)
   of KindFloat: destination.boundedAdd($cast[float64](wide.value), limits)
-  of KindTag:
-    let tagId = int(wide.value and 0x1ff)
-    if tagId <= 0 or tagId > doc.tags.len: fail("invalid BIF tag id")
-    let jump64 = wide.value shr 9
-    if jump64 > uint64(high(int)): fail("BIF tag jump exceeds platform size")
-    let jump = int(jump64)
-    let lineInfo = doc.takeLineInfo(next, parent)
-    let childParent = if lineInfo.present: lineInfo.value else: parent
-    if jump > limit - next or jump > doc.tokens.len - next:
-      fail("invalid BIF tag jump")
-    let bodyEnd = next + jump
-    destination.boundedAdd('(', limits)
-    destination.appendTagName(doc.tags[tagId - 1], limits)
-    if lineInfo.present: destination.boundedAdd(renderLineInfo(lineInfo.value, parent), limits)
-    while next < bodyEnd:
-      destination.boundedAdd(' ', limits)
-      next = doc.renderInto(next, bodyEnd, childParent, depth + 1, limits, destination)
-    if next != bodyEnd: fail("invalid BIF tag body")
-    destination.boundedAdd(')', limits)
   else: fail("unsupported BIF token kind")
   let lineInfo = doc.takeLineInfo(next, parent)
   if lineInfo.present: destination.boundedAdd(renderLineInfo(lineInfo.value, parent), limits)
   next
 
-proc bifToNif*(bifBytes: string; limits = defaultCodecLimits()): string =
-  let document = parseBif(bifBytes, limits)
+proc renderBifDocument*(document: BifDocument; limits = defaultCodecLimits()): string =
+  ## Renders a token document as canonical NIF without an intermediate BIF file.
+  validLimits(limits)
+  document.validatePools(limits)
+  if document.tokens.len > limits.maxTokens:
+    failLimit(nkeTokenLimit, "BIF token count exceeds configured limit")
+  type Frame = tuple[finish: int, info: LineInfo]
+  var frames: seq[Frame]
   var pos = 0
-  while pos < document.tokens.len:
-    if result.len > 0: result.boundedAdd('\n', limits)
-    pos = document.renderInto(pos, document.tokens.len, LineInfo(), 0, limits, result)
+  while pos < document.tokens.len or frames.len > 0:
+    if frames.len > 0 and pos == frames[^1].finish:
+      result.boundedAdd(')', limits)
+      discard frames.pop()
+      continue
+    let boundary = if frames.len == 0: document.tokens.len else: frames[^1].finish
+    if pos >= boundary: fail("BIF node exceeds parent boundary", pos)
+    if frames.len > limits.maxNestingDepth:
+      failLimit(nkeNestingTooDeep, "BIF nesting exceeds configured depth", pos)
+    let parent = if frames.len == 0: LineInfo() else: frames[^1].info
+    if frames.len > 0: result.boundedAdd(' ', limits)
+    elif result.len > 0: result.boundedAdd('\n', limits)
+    if kind(document.tokens[pos]) == KindTag:
+      let wide = document.widePayload(pos)
+      var next = wide.next
+      let tagId = wide.value and 0x1ff
+      if tagId == 0 or tagId > uint64(document.tags.len): fail("invalid BIF tag id", pos)
+      let info = document.takeLineInfo(next, parent)
+      if next > boundary or (wide.value shr 9) > uint64(boundary - next):
+        fail("invalid BIF tag jump", pos)
+      let finish = next + int(wide.value shr 9)
+      result.boundedAdd('(', limits)
+      result.appendTagName(document.tags[int(tagId) - 1], limits)
+      if info.present: result.boundedAdd(renderLineInfo(info.value, parent), limits)
+      frames.add (finish, if info.present: info.value else: parent)
+      pos = next
+    else:
+      pos = document.renderInto(pos, boundary, parent, frames.len, limits, result)
+      if pos > boundary: fail("BIF suffix exceeds parent boundary", pos)
+
+proc bifToNif*(bifBytes: string; limits = defaultCodecLimits()): string =
+  renderBifDocument(parseBif(bifBytes, limits), limits)
 
 proc validateBif*(bifBytes: string; limits = defaultCodecLimits()) =
   discard bifToNif(bifBytes, limits)

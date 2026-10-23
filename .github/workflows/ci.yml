@@ -68,7 +68,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Run repeated managed-memory paths
         run: |
-          nim c --mm:${{ matrix.mm }} -d:release --nimcache:nimcache/${{ matrix.mm }}-memory -o:nimcache/test_${{ matrix.mm }}_memory tests/test_arc_memory.nim
+          nim c --mm:${{ matrix.mm }} -d:release -d:useMalloc --nimcache:nimcache/${{ matrix.mm }}-memory -o:nimcache/test_${{ matrix.mm }}_memory tests/test_arc_memory.nim
           valgrind --leak-check=full --errors-for-leak-kinds=all --error-exitcode=1 nimcache/test_${{ matrix.mm }}_memory
 
   asan:

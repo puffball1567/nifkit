@@ -507,6 +507,8 @@ proc encodeValue[T](value: T; limits: CodecLimits; path: string): DataNode =
 
 proc toNif*[T](value: T; limits = defaultCodecLimits()): string =
   validLimits(limits)
+  # This scratch buffer belongs to one public conversion, including failures.
+  defer: activeReferences = @[]
   if activeReferences.len != 0:
     activeReferences.setLen(0)
   let root = compound(DataRootTag, nodeAtom($CurrentDataProfile), encodeValue(value, limits, "$"))
@@ -514,6 +516,7 @@ proc toNif*[T](value: T; limits = defaultCodecLimits()): string =
 
 proc toBif*[T](value: T; limits = defaultCodecLimits()): string =
   validLimits(limits)
+  defer: activeReferences = @[]
   if activeReferences.len != 0:
     activeReferences.setLen(0)
   var builder: TypedBifBuilder

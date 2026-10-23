@@ -39,6 +39,10 @@ nimble install nifkit
 
 ## Format Boundary
 
+For language-neutral node inspection, traversal, editing, and NIF/BIF output,
+import `nifkit/document` and see the [editable document API](docs/document-api.md).
+Existing conversion and typed-serialization APIs remain available unchanged.
+
 The codec backend is implemented against the public NIF/BIF specification. The
 specification is the compatibility contract: this package has no dependency on
 Nimony or any compiler implementation. This keeps the public API stable if an

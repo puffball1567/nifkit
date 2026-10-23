@@ -14,5 +14,11 @@ tests/test_line_info
 tests/test_malformed_fuzz
 tests/test_nif_encoder
 tests/test_spec_fixtures
+tests/test_codec_limits
+tests/test_typed_serializer
+tests/test_typed_fuzz
+tests/test_document
+tests/test_arc_memory
 examples/codec_matrix_demo
+examples/document_demo
 bin/
